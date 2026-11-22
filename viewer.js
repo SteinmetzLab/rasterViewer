@@ -19,7 +19,7 @@ const DEPTH_H = 15;   // um: height of a unit's band when plotted by depth (NP2.
 // so all shanks are drawn identically and empty stretches stay visible.
 const DEPTH_SITES_UM = [0, 2865];
 
-let meta, ticks, rows, N, FS, TS, TE, rastermap = null;
+let meta, ticks, rows, N, FS, TS, TE, rastermap = null, orderings = null;
 let gl, cvs, ov, ctx, prog = {}, res = {};
 // n0, n1: the visible span of the vertical coordinate Y of the current y-axis layout (rows for
 // "rows" and "rastermap", micrometers for "depth"; see buildLayouts)
@@ -72,6 +72,8 @@ async function load() {
     throw new Error("spike file lengths do not match meta.json");
   const rr = await fetch(DATA + "rastermap.json");       // optional (prep_rastermap.py)
   if (rr.ok) rastermap = await rr.json();
+  const ro = await fetch(DATA + "orderings.json");       // optional: further orderings of the neurons
+  if (ro.ok) orderings = await ro.json();
 }
 
 // Spikes packed by pack_data.py: gzip streams split into parts. Decoded while downloading,
@@ -150,6 +152,8 @@ async function loadPacked(man) {
 //              range of y (all sites, see DEPTH_SITES_UM) plus h/2 at each end; a unit is a band
 //              of height h centered on its y, shallow at top; units may overlap
 //   rastermap: row isort[k] at [k, k+1); one segment (cells aggregate across probes)
+//   Each entry of data/orderings.json is one more layout of the rastermap kind (name
+//   "rastermap", its own order), stored under its key and listed in the Neurons menu.
 function buildLayouts() {
   const ident = Int32Array.from({ length: N }, (_, i) => i);
   const idx = Float64Array.from(ident);
@@ -160,6 +164,13 @@ function buildLayouts() {
     LAY.rastermap = { name: "rastermap", Y: N, unit: 1, order: Int32Array.from(rastermap.isort),
                       lo: idx, segs: [{ y0: 0, y1: N, probe: null, shank: null, r0: 0, r1: N }],
                       frac: true };
+  }
+  for (const o of (orderings ? orderings.orderings : [])) {
+    if (!/^[a-z][a-z0-9_]*$/.test(o.key) || Object.hasOwn(LAY, o.key) || o.key === "depth")
+      throw new Error("orderings.json: bad or duplicate key " + o.key);
+    LAY[o.key] = { name: "rastermap", key: o.key, label: o.label, axis: o.axis, Y: N, unit: 1,
+                   order: Int32Array.from(o.isort), lo: idx,
+                   segs: [{ y0: 0, y1: N, probe: null, shank: null, r0: 0, r1: N }], frac: true };
   }
   // depth, in integer units of 0.1 um (y_um is stored to 0.1 um), so positions are exact
   const h10 = Math.round(DEPTH_H * 10), y10 = meta.rows.y_um.map((y) => Math.round(y * 10));
@@ -184,10 +195,15 @@ function buildLayouts() {
   meta.rows.y_um.forEach((y, i) => check(Math.abs(y * 10 - y10[i]) < 1e-6, `y_um[${i}] not a multiple of 0.1`));
   for (const g of segs) for (let i = g.r0 + 1; i < g.r1; i++) check(lo[i] >= lo[i - 1], `depth bands unsorted at row ${i}`);
   meta.segments.forEach((g, i) => check(g.end > g.start && (i === 0 || g.start === meta.segments[i - 1].end), "segments not contiguous"));
-  if (LAY.rastermap) {
+  for (const [key, L] of Object.entries(LAY)) if (L.name === "rastermap") {
     const seen = new Uint8Array(N);
-    for (const r of LAY.rastermap.order) { check(r >= 0 && r < N && !seen[r], "rastermap order is not a permutation"); seen[r] = 1; }
-    check(LAY.rastermap.order.length === N, "rastermap order has the wrong length");
+    for (const r of L.order) { check(r >= 0 && r < N && !seen[r], key + " order is not a permutation"); seen[r] = 1; }
+    check(L.order.length === N, key + " order has the wrong length");
+  }
+  const sel = document.getElementById("ymode");      // list the further orderings in the menu
+  for (const L of Object.values(LAY)) if (L.key) {
+    const op = document.createElement("option");
+    op.value = L.key; op.textContent = L.label; sel.appendChild(op);
   }
 }
 const lay = () => LAY[state.ymode];
@@ -1001,7 +1017,7 @@ function drawOverlay() {
   ctx.fillStyle = ink; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.font = "12px Arial";
   ctx.fillText(L.name === "rows" ? "Neuron (probe, shank, depth: shallow at top)"
     : L.name === "depth" ? `Position along shank, to scale (${DEPTH_H} µm per neuron; shallow at top)`
-    : "Neuron, Rastermap order", 0, 0);
+    : "Neuron, " + (L.axis || "Rastermap order"), 0, 0);
   ctx.restore();
 
   // pinned tooltip: outline the cell it describes
@@ -1059,7 +1075,7 @@ function updateStatus() {
     (state.ymode === "depth"
       ? `${state.n0.toFixed(0)} to ${state.n1.toFixed(0)} µm of stacked shanks · ` +
         `1 cell = ${b}×${b} px = ${dn.toPrecision(3)} µm × ${fmtDur(dt)} · `
-      : `${state.ymode === "rastermap" ? "Rastermap positions" : "rows"} ${state.n0.toFixed(1)} to ` +
+      : `${lay().name === "rastermap" ? (lay().key ? "positions" : "Rastermap positions") : "rows"} ${state.n0.toFixed(1)} to ` +
         `${state.n1.toFixed(1)} (${(state.n1 - state.n0).toFixed(1)} neurons) · ` +
         `1 cell = ${b}×${b} px = ${dn.toPrecision(3)} neurons × ${fmtDur(dt)} · `) +
     `grid ${W}×${H} · ${nsp >= 1e5 ? (nsp / 1e6).toFixed(2) + " M" : nsp.toLocaleString("en-US")} ` +

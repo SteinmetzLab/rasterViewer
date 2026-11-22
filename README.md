@@ -63,6 +63,16 @@ Controls in the top bar:
     here. That ordering is one good ordering, not a unique one: reruns with another seed or
     bin size keep only about 15% of each neuron's 20 nearest neighbors. The colored strip on
     the left shows each neuron's probe.
+  - Five further orderings (added 2026-11-22; `data/orderings.json`, built by
+    `prep_orderings.py` from `rastermap/orderings.json`; details in `rastermap/README.md`).
+    They are drawn exactly like Rastermap order, with another order:
+    - *Rastermap, refined*: the Rastermap layout with the order of nearby neurons improved.
+    - *Tree (Rastermap layout)*: a hierarchical-clustering tree of the neurons, its branches
+      flipped to follow the Rastermap layout. Best local order of the three.
+    - *Rastermap, no slow drift*, *Rastermap, refined, no slow drift*, *Tree, no slow drift*:
+      the same three, computed after removing every component slower than a 150 s period from
+      the sorting input. Slow drifts over the session then no longer drive the order. The
+      spikes shown are never filtered.
 - **Spikes**: which spikes count. *All* (default); *Tonic only*; *Burst spikes*; *Burst
   onsets* (only each burst's first spike, so the value is bursts/s); or *Burst + tonic*,
   which draws burst spikes black to magenta and tonic spikes black to green and adds the two,
@@ -259,6 +269,7 @@ present, and the packed ones otherwise.
 | `prep_data.py` | ALF + movie export to raw `ticks.u32`, `rows.u16`, and `meta.json` |
 | `pack_data.py` | Packs the raw spike files for the web; `load_spikes()` reads either form |
 | `prep_rastermap.py` | Copies the Rastermap ordering to `data/rastermap.json` (checks it is a permutation of the rows) |
+| `prep_orderings.py` | Copies the further orderings to `data/orderings.json` with their menu labels (same checks) |
 | `reference.py`, `make_refs.py` | Reference implementation and test-case writer |
 | `rastermap/` | How the Rastermap order was computed and checked (its own README) |
 | `bursts/` | The burst definition: detector, diagnostic figures, and literature notes (its own README) |
