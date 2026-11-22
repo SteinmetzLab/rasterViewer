@@ -11,6 +11,11 @@ import json
 from pathlib import Path
 import numpy as np
 from reference import Data, DEPTH_H
+sys_path_bursts = Path(__file__).resolve().parent / "bursts"
+import sys; sys.path.insert(0, str(sys_path_bursts))
+from detect_bursts import by_unit, detect  # noqa: E402
+
+BURST_PARAMS = (100.0, 4.0, 2)   # the viewer's default burst definition
 
 OUT = Path(__file__).resolve().parent / "refs"
 
@@ -22,9 +27,11 @@ def main():
     seg_starts = [s["start"] for s in D.meta["segments"]]
     views = []
 
-    def add(name, t0, t1, n0, n1, W, H, norm=False, eps=0.1, layout=None):
+    def add(name, t0, t1, n0, n1, W, H, norm=False, eps=0.1, layout=None, spikes=None):
         v = dict(name=name, T0=t0 * fs, dT=(t1 - t0) * fs / W, n0=n0, n1=n1,
                  W=W, H=H, norm=norm, eps=eps)
+        if spikes:
+            v["spikes"] = spikes; v["burst_params"] = list(BURST_PARAMS)
         if layout:
             v["layout"] = layout
             if layout == "depth":
@@ -87,11 +94,39 @@ def main():
         add(f"random_{kind}{i}", t0, t0 + span, y0, y0 + ysp, W, H, bool(rng.integers(0, 2)),
             float(rng.choice([0, 0.1, 1.0])), layout=kind)
 
+    # burst / tonic views (default burst definition), and the detection checksums the viewer
+    # compares its own detection with
+    order, _ = by_unit(D.ticks, D.rows.astype(np.int64), N)
+    b_u, o_u, _ = detect(D.ticks[order], D.rows[order], *BURST_PARAMS, fs=fs)
+    is_burst = np.zeros(D.ticks.size, bool); is_burst[order] = b_u
+    is_onset = np.zeros(D.ticks.size, bool); is_onset[order] = o_u
+    masks = {"burst": is_burst, "tonic": ~is_burst, "onset": is_onset}
+    json.dump(dict(params=list(BURST_PARAMS), n_burst=int(is_burst.sum()), n_onset=int(is_onset.sum()),
+                   sum_index_burst=int(np.flatnonzero(is_burst).sum()),
+                   sum_index_onset=int(np.flatnonzero(is_onset).sum())),
+              open(OUT / "bursts.json", "w"), indent=1)
+    p6 = [s for s in D.meta["segments"] if s["probe"] == 5 and s["shank"] == 0][0]
+    add("burst_full_abs", TS, TE, 0, N, 1400, 800, spikes="burst")
+    add("tonic_full_norm", TS, TE, 0, N, 1244, 651, True, 0.1, spikes="tonic")
+    add("onset_P6S0_60s", 1050, 1110, p6["start"], p6["end"], 1400, 800, spikes="onset")
+    add("overlay_P6S0_screenshot", 1110.13, 1111.3, p6["start"], p6["end"], 1512, 590,
+        spikes="overlay")
+    add("burst_depth_full_norm", TS, TE, 0, D.extent("depth"), 900, 700, True, 0.1,
+        layout="depth", spikes="burst")
+    add("tonic_rastermap_10s", 1046, 1056, 0, N, 1400, 800, layout="rastermap", spikes="tonic")
+
     for i, v in enumerate(views):
-        a = D.cell_values(v["T0"], v["dT"], v["n0"], v["n1"], v["W"], v["H"], v["norm"], v["eps"],
-                          layout=v.get("layout", "rows"), h=v.get("h", DEPTH_H))
+        def ref(spk):
+            return D.cell_values(v["T0"], v["dT"], v["n0"], v["n1"], v["W"], v["H"], v["norm"],
+                                 v["eps"], layout=v.get("layout", "rows"), h=v.get("h", DEPTH_H),
+                                 mask=None if spk is None else masks[spk])
+        spk = v.get("spikes")
+        a = ref("burst" if spk == "overlay" else spk)
         v["file"] = f"view{i:02d}.f32"
         a.astype("<f4").tofile(OUT / v["file"])
+        if spk == "overlay":            # second output: tonic
+            v["file2"] = f"view{i:02d}_b.f32"
+            ref("tonic").astype("<f4").tofile(OUT / v["file2"])
         print(f"{v['name']:28s} {v['W']}x{v['H']}  max {a.max():.4g}  mean {a.mean():.4g}  "
               f"no-neuron cells {int((a == -2).sum())}  no-sample cols {int((a[0] == -1).sum())}")
     json.dump(views, open(OUT / "views.json", "w"), indent=1)

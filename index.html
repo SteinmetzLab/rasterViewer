@@ -64,6 +64,21 @@
       <option value="rastermap">Rastermap order</option>
     </select>
   </label>
+  <label title="Which spikes to show. Bursts: >= K spikes of one unit, every ISI <= M ms, after >= S ms of silence">Spikes
+    <select id="spikes">
+      <option value="all">All</option>
+      <option value="tonic">Tonic only</option>
+      <option value="burst">Burst spikes</option>
+      <option value="onset">Burst onsets</option>
+      <option value="overlay">Burst + tonic (magenta / green)</option>
+    </select>
+  </label>
+  <span id="burstWrap" style="display:none; gap:5px; align-items:center; color:var(--ink2)"
+        title="Burst definition. Default: the thalamic low-threshold-burst convention (Lu, Guido &amp; Sherman 1992)">
+    silence ≥<input id="bS" type="number" min="0" step="10" style="width:52px"> ms,
+    ISI ≤<input id="bM" type="number" min="0.1" step="0.5" style="width:46px"> ms,
+    ≥<input id="bK" type="number" min="2" max="16" step="1" style="width:38px"> spikes
+  </span>
   <label title="Each displayed cell averages over a block of N x N screen pixels">Cell
     <select id="block"><option>1</option><option selected>2</option><option>3</option><option>4</option>
       <option>6</option><option>8</option></select> px</label>
@@ -102,6 +117,11 @@
   as dark gray); or Rastermap order (similar neurons adjacent). In the first two, cells
   never average across a shank boundary: a cell that straddles one uses only the neurons of
   the shank under its center. In Rastermap order, cells average across probes.
+  <b>Spikes</b>: all spikes, only tonic ones, only burst spikes, only burst onsets (the
+  first spike of each burst, so the rate is bursts/s), or burst and tonic overlaid in magenta
+  and green (both together add up to white). A burst is a run of at least K spikes of one
+  unit with every ISI at most M ms, after at least S ms without a spike from that unit. The
+  default (100 ms, 4 ms, 2 spikes) is the usual criterion for thalamic low-threshold bursts.<br>
   The view is saved in the URL, so it can be bookmarked.
 </div>
 <div id="loading"><div id="loadMsg">Loading spikes</div></div>

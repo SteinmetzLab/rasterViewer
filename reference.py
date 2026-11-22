@@ -99,12 +99,16 @@ class Data:
         return float(self.layout(kind, h)[5][-1])
 
     def cell_values(self, T0, dT, n0, n1, W, H, normalized=False, eps=0.1, layout="rows",
-                    h=DEPTH_H):
+                    h=DEPTH_H, mask=None):
+        """mask: optional boolean array over the (time-sorted) spikes; only those spikes count
+        (e.g. burst spikes, or tonic = not burst)."""
         lo, hi, unit, order, seg_lo, seg_hi = self.layout(layout, h)
         Tend = T0 + W * dT
         i0 = np.searchsorted(self.ticks, np.ceil(T0), "left")
         i1 = np.searchsorted(self.ticks, np.ceil(Tend), "left")
         s = self.ticks[i0:i1].astype(np.float64); r = self.rows[i0:i1].astype(np.int64)
+        if mask is not None:
+            keep = mask[i0:i1]; s = s[keep]; r = r[keep]
         bounds = np.ceil(T0 + np.arange(W + 1) * dT)     # first integer tick of each column
         col = np.clip(np.searchsorted(bounds, s, side="right") - 1, 0, W - 1)
         counts = np.bincount(r * W + col, minlength=self.n * W).reshape(self.n, W).astype(np.float64)

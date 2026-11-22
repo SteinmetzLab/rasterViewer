@@ -25,11 +25,14 @@ let gl, cvs, ov, ctx, prog = {}, res = {};
 // "rows" and "rastermap", micrometers for "depth"; see buildLayouts)
 let state = {
   t0: 0, t1: 1, n0: 0, n1: 1, ymode: "rows", mode: "abs", eps: 0.1, block: 2,
+  spikes: "all", burst: { S: 100, M: 4, K: 2 },
   abs: { vmin: 0.3, vmax: 50, cmap: "magma" },
   norm: { vmin: 0.1, vmax: 10, cmap: "viridis" },
 };
 let layout = {}, lastDraw = { i0: 0, i1: 0, ms: 0 }, dirty = true, lastMouse = null;
 let LAY = {};           // y-axis layouts by name
+let SETS = {};          // spike sets on the GPU: all, and burst / onset subsets
+let burst = { flags: null, params: {} };   // current burst classification
 let pinned = null;      // {x, y, key}: tooltip pinned by a click, until the view changes
 let hitboxes = [];      // clickable probe / shank labels on the neuron axis
 let altHeld = false;    // Alt / Option held: the tooltip follows the pointer
@@ -271,16 +274,24 @@ void main() {
 //    0.1 um (rowinfo.w), so lo(i) = (w(i) - w(ia)) / 10 is exact, and the overlap
 //    ov(i) = clamp(min(b, lo + h) - max(a, lo)) / h is accurate even when cells are tiny.
 // cr.x < 0 marks a cell with no neurons (value -2).
+// Two spike counts per texel come in (u_counts = set A, u_counts2 = set B, e.g. all spikes and
+// burst spikes). Two values go out: r from count u_c1 . (A, B), b from u_c2 . (A, B), so that
+// e.g. tonic = all - burst is formed from exact integer counts.
 const FS_AGG = `#version 300 es
 precision highp float; precision highp int; precision highp sampler2D;
-uniform sampler2D u_counts;    // R32F, W x R: counts of rows u_rlo .. u_rlo + R - 1
+uniform sampler2D u_counts, u_counts2;  // R32F, W x R: counts of rows u_rlo .. u_rlo + R - 1
 uniform sampler2D u_rowinfo;   // RGBA32F, 1024 wide: seg_start, seg_end, r0, depth band start
 uniform sampler2D u_cellrows;  // RGBA32F, H x 1 (see above)
 uniform sampler2D u_order;     // R32F, 1024 wide: row shown at each position
 uniform highp usampler2D u_bounds;  // R32UI, (W+1) x 1: first tick of each column
 uniform float u_fs, u_eps, u_h;
+uniform vec2 u_c1, u_c2;       // weights of (A, B) for the two outputs
 uniform int u_H, u_rlo, u_norm, u_depth;
 out vec4 o;
+vec2 cnt(int j, int r) {       // (output 1, output 2) counts of texel (j, r)
+  vec2 ab = vec2(texelFetch(u_counts, ivec2(j, r), 0).r, texelFetch(u_counts2, ivec2(j, r), 0).r);
+  return vec2(dot(u_c1, ab), dot(u_c2, ab));
+}
 vec4 rowinfo(int i) { return texelFetch(u_rowinfo, ivec2(i % 1024, i / 1024), 0); }
 int orderAt(int p) { return int(texelFetch(u_order, ivec2(p % 1024, p / 1024), 0).r); }
 float weight(int row) { return (u_norm == 1) ? 1.0 / (rowinfo(row).z + u_eps) : 1.0; }
@@ -289,11 +300,12 @@ void main() {
   int k = u_H - 1 - int(gl_FragCoord.y);          // k = 0 is the top cell row
   // the column's duration: its whole number of samples (a tick stands for [s-0.5, s+0.5))
   uint nt = texelFetch(u_bounds, ivec2(j + 1, 0), 0).r - texelFetch(u_bounds, ivec2(j, 0), 0).r;
-  if (nt == 0u) { o = vec4(-1.0, 0.0, 0.0, 1.0); return; }
+  if (nt == 0u) { o = vec4(-1.0, 0.0, -1.0, 1.0); return; }
   float dtSec = float(nt) / u_fs;
   vec4 cr = texelFetch(u_cellrows, ivec2(k, 0), 0);
-  if (cr.x < 0.0) { o = vec4(-2.0, 0.0, 0.0, 1.0); return; }
-  float num = 0.0, den = 0.0;
+  if (cr.x < 0.0) { o = vec4(-2.0, 0.0, -2.0, 1.0); return; }
+  vec2 num = vec2(0.0);
+  float den = 0.0;
   if (u_depth == 0) {
     int ia = int(cr.x), ib = int(cr.z);
     float fa = cr.y, fb = cr.w;
@@ -302,15 +314,16 @@ void main() {
       float ov = (p == ib ? fb : 1.0) - (p == ia ? fa : 0.0);
       if (ov <= 0.0) continue;
       int row = orderAt(p);
-      num += ov * weight(row) * texelFetch(u_counts, ivec2(j, row - u_rlo), 0).r;
+      num += ov * weight(row) * cnt(j, row - u_rlo);
       den += ov;
     }
   } else {
     int ia = int(cr.x), iend = int(cr.z);
-    float a = cr.y, b = cr.w, w0 = rowinfo(ia).w, numEq = 0.0;
+    float a = cr.y, b = cr.w, w0 = rowinfo(ia).w;
+    vec2 numEq = vec2(0.0);
     for (int i = ia; i < iend; i++) {
       float lo = (rowinfo(i).w - w0) * 0.1;
-      float wc = weight(i) * texelFetch(u_counts, ivec2(j, i - u_rlo), 0).r;
+      vec2 wc = weight(i) * cnt(j, i - u_rlo);
       numEq += wc;
       float ov = (min(b, lo + u_h) - max(a, lo)) / u_h;
       if (ov <= 0.0) continue;
@@ -322,19 +335,27 @@ void main() {
     // calling the cell empty.
     if (den <= 0.0) { num = numEq / float(iend - ia); den = 1.0; }
   }
-  o = vec4(den > 0.0 ? num / (den * dtSec) : -2.0, den, 0.0, 1.0);
+  vec2 v = den > 0.0 ? num / (den * dtSec) : vec2(-2.0);
+  o = vec4(v.x, den, v.y, 1.0);
 }`;
 const FS_CMAP = `#version 300 es
 precision highp float; precision highp sampler2D;
-uniform sampler2D u_val, u_lut;
+uniform sampler2D u_val, u_lut, u_lut2;
 uniform float u_lmin, u_lmax;
+uniform int u_overlay;         // 1: r through u_lut plus b through u_lut2, added
 out vec4 o;
+float tOf(float v) { return v > 0.0 ? clamp((log(v) - u_lmin) / (u_lmax - u_lmin), 0.0, 1.0) : 0.0; }
+vec4 lut(sampler2D s, float t) { return texelFetch(s, ivec2(int(t * 255.0 + 0.5), 0), 0); }
 void main() {
-  float v = texelFetch(u_val, ivec2(gl_FragCoord.xy), 0).r;
+  vec4 val = texelFetch(u_val, ivec2(gl_FragCoord.xy), 0);
+  float v = val.r;
   if (v < -1.5) { o = vec4(0.11, 0.12, 0.13, 1.0); return; }   // no neurons here (depth)
   if (v < 0.0) { o = vec4(0.25, 0.25, 0.25, 1.0); return; }    // column holds no samples
-  float t = v > 0.0 ? clamp((log(v) - u_lmin) / (u_lmax - u_lmin), 0.0, 1.0) : 0.0;
-  o = texelFetch(u_lut, ivec2(int(t * 255.0 + 0.5), 0), 0);
+  if (u_overlay == 1) {
+    o = vec4(min(lut(u_lut, tOf(v)).rgb + lut(u_lut2, tOf(val.b)).rgb, 1.0), 1.0);
+    return;
+  }
+  o = lut(u_lut, tOf(v));
 }`;
 
 function compile(vs, fs) {
@@ -372,15 +393,7 @@ function initGL() {
   prog.agg = compile(VS_FULL, FS_AGG);
   prog.cmap = compile(VS_FULL, FS_CMAP);
 
-  res.vao = gl.createVertexArray();
-  gl.bindVertexArray(res.vao);
-  const tb = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, tb); gl.bufferData(gl.ARRAY_BUFFER, ticks, gl.STATIC_DRAW);
-  gl.enableVertexAttribArray(0); gl.vertexAttribIPointer(0, 1, gl.UNSIGNED_INT, 0, 0);
-  const rb = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, rb); gl.bufferData(gl.ARRAY_BUFFER, rows, gl.STATIC_DRAW);
-  gl.enableVertexAttribArray(1); gl.vertexAttribIPointer(1, 1, gl.UNSIGNED_SHORT, 0, 0);
-  gl.bindVertexArray(null);
+  SETS.all = { name: "all", ticks, rows, search: null, ...makeVao(ticks, rows) };
   res.emptyVao = gl.createVertexArray();
 
   // per-row info texture
@@ -395,7 +408,14 @@ function initGL() {
     L.orderTex = makeTex(1024, H, gl.R32F, gl.RED, gl.FLOAT, o);
   }
   res.lut = makeTex(256, 1, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  const ramp = (r, g, b) => {   // black to (r, g, b), linear
+    const px = new Uint8Array(256 * 4);
+    for (let i = 0; i < 256; i++) px.set([r * i, g * i, b * i, 255], 4 * i);
+    return makeTex(256, 1, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  };
+  res.lutBurst = ramp(1, 0, 1); res.lutTonic = ramp(0, 1, 0);   // magenta + green = white
   res.counts = { tex: null, fbo: gl.createFramebuffer(), w: 0, h: 0 };
+  res.counts2 = { tex: null, fbo: gl.createFramebuffer(), w: 0, h: 0 };
   res.vals = { tex: null, fbo: gl.createFramebuffer(), w: 0, h: 0 };
   // Search counting is an optimization: if anything about it fails, use points only.
   res.search = null; res.searchNote = "off (?count=points)";
@@ -403,6 +423,10 @@ function initGL() {
     try { initSearch(); verifySearch(); }
     catch (err) {
       console.warn("search counting disabled:", err);
+      if (SETS.all.search) {
+        gl.deleteTexture(SETS.all.search.rowticks); gl.deleteTexture(SETS.all.search.rowoff);
+        SETS.all.search = null;
+      }
       res.search = null; res.searchNote = "off: " + err.message;
     }
   }
@@ -414,14 +438,23 @@ function initGL() {
 function initSearch() {
   const maxT = gl.getParameter(gl.MAX_TEXTURE_SIZE);
   const TW = 1 << Math.floor(Math.log2(Math.min(16384, maxT)));
-  const n = ticks.length, TH = Math.max(1, Math.ceil(n / TW));
+  const src = FS_SEARCH.replaceAll("TWLOG2u", `${Math.log2(TW)}u`).replaceAll("TWu", `${TW}u`);
+  if (/\bTW(u|LOG2u)\b/.test(src)) throw new Error("search shader template not fully substituted");
+  res.search = { prog: compile(VS_FULL, src), TW, maxT, ratio: SEARCH_RATIO_DEFAULT };
+  SETS.all.search = makeSearchTex(ticks, rows);
+}
+
+// Row-grouped copy of a set's spikes for search counting (texture of ticks, and row offsets).
+function makeSearchTex(tk, rw) {
+  const { TW, maxT } = res.search;
+  const n = tk.length, TH = Math.max(1, Math.ceil(n / TW));
   if (TH > maxT) throw new Error(`${n} spikes need a ${TW}x${TH} texture, max ${maxT}`);
   while (gl.getError() !== gl.NO_ERROR) {}   // clear stale errors so the check below is ours
   const off = new Uint32Array(1024 * Math.ceil((N + 1) / 1024));   // padded to whole texture rows
-  for (let i = 0; i < n; i++) off[rows[i] + 1]++;
+  for (let i = 0; i < n; i++) off[rw[i] + 1]++;
   for (let r = 0; r < N; r++) off[r + 1] += off[r];
   const cur = off.slice(0, N), rt = new Uint32Array(TW * TH);
-  for (let i = 0; i < n; i++) rt[cur[rows[i]]++] = ticks[i];
+  for (let i = 0; i < n; i++) rt[cur[rw[i]]++] = tk[i];
   const rowticks = makeTex(TW, TH, gl.R32UI, gl.RED_INTEGER, gl.UNSIGNED_INT, rt);
   const rowoff = makeTex(1024, off.length / 1024, gl.R32UI, gl.RED_INTEGER, gl.UNSIGNED_INT, off);
   const e = gl.getError();
@@ -429,10 +462,94 @@ function initSearch() {
     gl.deleteTexture(rowticks); gl.deleteTexture(rowoff);
     throw new Error(`texture upload failed (GL error 0x${e.toString(16)})`);
   }
-  const src = FS_SEARCH.replaceAll("TWLOG2u", `${Math.log2(TW)}u`).replaceAll("TWu", `${TW}u`);
-  if (/\bTW(u|LOG2u)\b/.test(src)) throw new Error("search shader template not fully substituted");
-  res.search = { prog: compile(VS_FULL, src), rowticks, rowoff, TW, TH, ratio: SEARCH_RATIO_DEFAULT };
+  return { rowticks, rowoff };
 }
+
+function makeVao(tk, rw) {
+  const vao = gl.createVertexArray(), bufs = [gl.createBuffer(), gl.createBuffer()];
+  gl.bindVertexArray(vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufs[0]); gl.bufferData(gl.ARRAY_BUFFER, tk, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0); gl.vertexAttribIPointer(0, 1, gl.UNSIGNED_INT, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufs[1]); gl.bufferData(gl.ARRAY_BUFFER, rw, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(1); gl.vertexAttribIPointer(1, 1, gl.UNSIGNED_SHORT, 0, 0);
+  gl.bindVertexArray(null);
+  return { vao, bufs };
+}
+
+function freeSet(S) {
+  if (!S) return;
+  gl.deleteVertexArray(S.vao); S.bufs.forEach((b) => gl.deleteBuffer(b));
+  if (S.search) { gl.deleteTexture(S.search.rowticks); gl.deleteTexture(S.search.rowoff); }
+}
+
+// ---------------------------------------------------------------- bursts
+// A burst: a run of >= K consecutive spikes of one unit, every ISI <= M ms, whose first spike
+// follows >= S ms of silence from that unit (S = 0: no silence needed). Every spike of the run
+// is a burst spike; its first spike is the burst onset. Same definition and arithmetic as
+// bursts/detect_bursts.py (the self-test compares the two). One pass in time order, keeping per
+// unit its last spike and the current run (its first K - 1 spikes are held until the run
+// reaches K spikes). Default: the thalamic LTS convention (Lu, Guido & Sherman 1992).
+const BURST_DEFAULT = { S: 100, M: 4, K: 2 };
+function detectBursts(S_ms, M_ms, K) {
+  K = Math.max(2, Math.round(K));    // the run buffer below assumes K >= 2 (the UI enforces it)
+  const n = ticks.length, flags = new Uint8Array(n);       // bit 0 burst spike, bit 1 onset
+  const M = M_ms * FS / 1000, S = S_ms * FS / 1000, KB = K - 1;
+  const last = new Float64Array(N).fill(-Infinity), len = new Int32Array(N);
+  const ok = new Uint8Array(N), buf = new Int32Array(N * KB);
+  for (let k = 0; k < n; k++) {
+    const r = rows[k], t = ticks[k], pre = t - last[r];
+    last[r] = t;
+    if (pre <= M) {
+      const L = ++len[r];
+      if (!ok[r]) continue;
+      if (L < K) buf[r * KB + L - 1] = k;
+      else if (L === K) {
+        for (let q = 0; q < KB; q++) flags[buf[r * KB + q]] |= 1;
+        flags[buf[r * KB]] |= 2; flags[k] |= 1;
+      } else flags[k] |= 1;
+    } else {
+      len[r] = 1; ok[r] = pre >= S ? 1 : 0; buf[r * KB] = k;
+    }
+  }
+  return flags;
+}
+
+// Run detection and build the GPU sets of burst spikes and of burst onsets.
+function buildBurstSets(S_ms, M_ms, K) {
+  const t0 = performance.now(), flags = detectBursts(S_ms, M_ms, K);
+  const sets = {};
+  for (const [name, bit] of [["burst", 1], ["onset", 2]]) {
+    let m = 0;
+    for (let k = 0; k < flags.length; k++) if (flags[k] & bit) m++;
+    const tk = new Uint32Array(m), rw = new Uint16Array(m);
+    let q = 0, sumIdx = 0;
+    for (let k = 0; k < flags.length; k++) if (flags[k] & bit) { tk[q] = ticks[k]; rw[q++] = rows[k]; sumIdx += k; }
+    freeSet(SETS[name]);
+    SETS[name] = { name, ticks: tk, rows: rw, n: m, sumIdx, ...makeVao(tk, rw), search: null };
+    if (res.search) {
+      try { SETS[name].search = makeSearchTex(tk, rw); }
+      catch (err) { console.warn(`search counting off for ${name}:`, err); }
+    }
+  }
+  burst.flags = flags; burst.params = { S: S_ms, M: M_ms, K };
+  burst.ms = performance.now() - t0;
+  console.log(`bursts (${S_ms} ms, ${M_ms} ms, ${K}): ${SETS.onset.n} bursts, ` +
+              `${SETS.burst.n} burst spikes, ${burst.ms.toFixed(0)} ms`);
+}
+function ensureBursts() {
+  const p = state.burst, q = burst.params;
+  if (!burst.flags || q.S !== p.S || q.M !== p.M || q.K !== p.K) buildBurstSets(p.S, p.M, p.K);
+}
+
+// Which spike sets a display mode counts, and how the two outputs combine them:
+// value 1 = c1 . (A, B), value 2 = c2 . (A, B).
+const SPIKE_MODES = {
+  all:     { A: "all",   B: null,    c1: [1, 0],  c2: [0, 0],  label: "All spikes" },
+  tonic:   { A: "all",   B: "burst", c1: [1, -1], c2: [0, 0],  label: "Tonic spikes" },
+  burst:   { A: "burst", B: null,    c1: [1, 0],  c2: [0, 0],  label: "Burst spikes" },
+  onset:   { A: "onset", B: null,    c1: [1, 0],  c2: [0, 0],  label: "Burst onsets" },
+  overlay: { A: "all",   B: "burst", c1: [0, 1],  c2: [1, -1], label: "Burst + tonic" },
+};
 
 // Startup check of search counting on this GPU and browser, and calibration of when to use it.
 // Counts the session's last 300 s (largest tick values) for all rows on a 512-column grid with
@@ -468,8 +585,8 @@ function verifySearch() {
   console.log("search counting:", res.searchNote, res.search.calib);
 }
 
-function readCounts(W, R) {        // -> Float32Array R x W of pass-1 counts, row 0 = first row
-  gl.bindFramebuffer(gl.FRAMEBUFFER, res.counts.fbo);
+function readCounts(W, R, target = res.counts) {   // -> Float32Array R x W of pass-1 counts
+  gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
   const px = new Float32Array(W * R * 4);
   gl.readPixels(0, 0, W, R, gl.RGBA, gl.FLOAT, px);
   const out = new Float32Array(W * R);
@@ -528,10 +645,10 @@ function lowerBound(arr, x) {      // first index with arr[i] >= x
 // Pass 1. v = {T0, dT (ticks)}, W columns, rows rlo..rhi-1. Leaves per-(column, row) spike
 // counts in res.counts (W x R) and the column boundaries in res.bounds.
 // method: "points", "search" or "auto" (both give identical counts).
-function countSpikes(v, W, method, rlo, rhi) {
+function countSpikes(v, W, method, rlo, rhi, set = SETS.all, target = res.counts) {
   const R = rhi - rlo;
   const base = Math.ceil(v.T0), Tend = v.T0 + W * v.dT;
-  const i0 = lowerBound(ticks, base), i1 = lowerBound(ticks, Math.ceil(Tend));
+  const i0 = lowerBound(set.ticks, base), i1 = lowerBound(set.ticks, Math.ceil(Tend));
 
   // integer column boundaries (float64 here), used by pass 1 and for durations in pass 2
   const bnd = new Uint32Array(W + 1);
@@ -543,14 +660,14 @@ function countSpikes(v, W, method, rlo, rhi) {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 
   // pass 1: counts per (column, row)
-  ensureTarget(res.counts, W, R, gl.R32F, gl.RED, gl.FLOAT);
-  gl.bindFramebuffer(gl.FRAMEBUFFER, res.counts.fbo);
+  ensureTarget(target, W, R, gl.R32F, gl.RED, gl.FLOAT);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
   gl.viewport(0, 0, W, R);
   gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
-  const useSearch = !!res.search && i1 > i0 &&
+  const useSearch = !!res.search && !!set.search && i1 > i0 &&
     (method === "search" || (method === "auto" && i1 - i0 > res.search.ratio * W * R));
   if (useSearch) {
-    const S = res.search, P = S.prog; gl.useProgram(P.p);
+    const S = set.search, P = res.search.prog; gl.useProgram(P.p);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, res.bounds);
     gl.uniform1i(P.u.u_bounds, 0);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, S.rowticks);
@@ -568,7 +685,7 @@ function countSpikes(v, W, method, rlo, rhi) {
     gl.uniform1i(P.u.u_W, W); gl.uniform1i(P.u.u_rlo, rlo); gl.uniform1i(P.u.u_R, R);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, res.bounds);
     gl.uniform1i(P.u.u_bounds, 0);
-    gl.bindVertexArray(res.vao);
+    gl.bindVertexArray(set.vao);
     gl.drawArrays(gl.POINTS, i0, i1 - i0);
     gl.bindVertexArray(null);
     gl.disable(gl.BLEND);
@@ -578,7 +695,9 @@ function countSpikes(v, W, method, rlo, rhi) {
 
 // v = {T0, dT (ticks), n0, n1 (Y of layout L)}, grid W x H, norm (bool), eps. Leaves values in
 // res.vals.
-function computeValues(v, W, H, norm, eps, method = COUNT_MODE, L = lay()) {
+function computeValues(v, W, H, norm, eps, method = COUNT_MODE, L = lay(), spikes = state.spikes) {
+  const SM = SPIKE_MODES[spikes];
+  if (SM.A !== "all" || SM.B) ensureBursts();
   // per cell row: which positions it averages and with what end overlaps (float64 here)
   const cr = new Float32Array(4 * H);
   let pmin = Infinity, pmax = -Infinity;
@@ -600,7 +719,8 @@ function computeValues(v, W, H, norm, eps, method = COUNT_MODE, L = lay()) {
     rlo = Infinity; rhi = -Infinity;
     for (let p = pmin; p < pmax; p++) { const r = L.order[p]; if (r < rlo) rlo = r; if (r >= rhi) rhi = r + 1; }
   }
-  const c = countSpikes(v, W, method, rlo, rhi);
+  const c = countSpikes(v, W, method, rlo, rhi, SETS[SM.A], res.counts);
+  const c2 = SM.B ? countSpikes(v, W, method, rlo, rhi, SETS[SM.B], res.counts2) : null;
   // pass 2: aggregate rows within the cell's segment
   ensureTarget(res.vals, W, H, gl.RGBA32F, gl.RGBA, gl.FLOAT);
   gl.bindFramebuffer(gl.FRAMEBUFFER, res.vals.fbo);
@@ -608,6 +728,9 @@ function computeValues(v, W, H, norm, eps, method = COUNT_MODE, L = lay()) {
   const A = prog.agg; gl.useProgram(A.p);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, res.counts.tex);
   gl.uniform1i(A.u.u_counts, 0);
+  gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D, (c2 ? res.counts2 : res.counts).tex);
+  gl.uniform1i(A.u.u_counts2, 5);
+  gl.uniform2f(A.u.u_c1, SM.c1[0], SM.c1[1]); gl.uniform2f(A.u.u_c2, SM.c2[0], SM.c2[1]);
   gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, res.rowinfo);
   gl.uniform1i(A.u.u_rowinfo, 1);
   if (!res.cellrows) res.cellrows = gl.createTexture();
@@ -625,7 +748,8 @@ function computeValues(v, W, H, norm, eps, method = COUNT_MODE, L = lay()) {
   gl.uniform1i(A.u.u_H, H); gl.uniform1i(A.u.u_rlo, rlo); gl.uniform1i(A.u.u_norm, norm ? 1 : 0);
   gl.bindVertexArray(res.emptyVao);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
-  return c;
+  return { ...c, path: c2 && c2.path !== c.path ? `${c.path}+${c2.path}` : c.path,
+           spikesInWindow: c.i1 - c.i0 };
 }
 
 function drawColormapped(W, H, s) {
@@ -634,20 +758,23 @@ function drawColormapped(W, H, s) {
   const C = prog.cmap; gl.useProgram(C.p);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, res.vals.tex);
   gl.uniform1i(C.u.u_val, 0);
-  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, res.lut);
+  const over = state.spikes === "overlay";
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, over ? res.lutBurst : res.lut);
   gl.uniform1i(C.u.u_lut, 1);
+  gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, res.lutTonic);
+  gl.uniform1i(C.u.u_lut2, 2); gl.uniform1i(C.u.u_overlay, over ? 1 : 0);
   gl.uniform1f(C.u.u_lmin, Math.log(s.vmin)); gl.uniform1f(C.u.u_lmax, Math.log(s.vmax));
   gl.bindVertexArray(res.emptyVao);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 }
 
-function readValues(W, H) {        // -> Float32Array H x W, row 0 = top
+function readValues(W, H, ch = 0) {   // -> Float32Array H x W of output ch (0 or 2), row 0 = top
   gl.bindFramebuffer(gl.FRAMEBUFFER, res.vals.fbo);
   const px = new Float32Array(W * H * 4);
   gl.readPixels(0, 0, W, H, gl.RGBA, gl.FLOAT, px);
   const out = new Float32Array(W * H);
   for (let y = 0; y < H; y++)
-    for (let x = 0; x < W; x++) out[(H - 1 - y) * W + x] = px[4 * (y * W + x)];
+    for (let x = 0; x < W; x++) out[(H - 1 - y) * W + x] = px[4 * (y * W + x) + ch];
   return out;
 }
 
@@ -674,9 +801,13 @@ function candidates(L, sp) {
 }
 
 // CPU value of one cell (float64), the same semantics; used for the hover readout and tests.
-function cellCPU(v, W, H, j, k, norm, eps, L = lay()) {
+function cellCPU(v, W, H, j, k, norm, eps, L = lay(), spikes = state.spikes) {
+  const SM = SPIKE_MODES[spikes];
+  if (SM.A !== "all" || SM.B) ensureBursts();
   const sp = cellSpan(v, H, k, L), [pa, pb] = candidates(L, sp);
-  const n = Math.max(0, pb - pa), ovs = new Float64Array(n), cnt = new Float64Array(n);
+  const n = Math.max(0, pb - pa), ovs = new Float64Array(n);
+  const cnt = { all: new Float64Array(n), burst: new Float64Array(n), onset: new Float64Array(n) };
+  const fl = burst.flags;
   const slot = new Map();
   let den = 0;
   for (let p = pa; p < pb; p++) {
@@ -686,16 +817,25 @@ function cellCPU(v, W, H, j, k, norm, eps, L = lay()) {
   }
   const c0 = v.T0 + j * v.dT, c1 = v.T0 + (j + 1) * v.dT;
   const lo = lowerBound(ticks, Math.ceil(c0)), hi = lowerBound(ticks, Math.ceil(c1));
-  for (let s = lo; s < hi; s++) { const q = slot.get(rows[s]); if (q !== undefined) cnt[q]++; }
-  let num = 0, nsp = 0;
+  for (let s = lo; s < hi; s++) {
+    const q = slot.get(rows[s]);
+    if (q === undefined) continue;
+    cnt.all[q]++;
+    if (fl) { if (fl[s] & 1) cnt.burst[q]++; if (fl[s] & 2) cnt.onset[q]++; }
+  }
+  const num = [0, 0], tot = { all: 0, burst: 0, onset: 0 };
   for (let p = pa; p < pb; p++) {
-    const w = norm ? 1 / (meta.rows.r0[L.order[p]] + eps) : 1;
-    num += ovs[p - pa] * w * cnt[p - pa];
-    if (ovs[p - pa] > 0) nsp += cnt[p - pa];
+    const q = p - pa, w = norm ? 1 / (meta.rows.r0[L.order[p]] + eps) : 1;
+    const a = cnt[SM.A][q], b = SM.B ? cnt[SM.B][q] : 0;
+    num[0] += ovs[q] * w * (SM.c1[0] * a + SM.c1[1] * b);
+    num[1] += ovs[q] * w * (SM.c2[0] * a + SM.c2[1] * b);
+    if (ovs[q] > 0) for (const key in tot) tot[key] += cnt[key][q];
   }
   const nt = Math.ceil(c1) - Math.ceil(c0);
-  const value = nt <= 0 ? -1 : den > 0 ? num / (den * nt / FS) : -2;
-  return { value, neurons: den, spikes: nsp, a: sp.a, b: sp.b, seg: sp.seg, dtSec: nt / FS };
+  const val = (x) => nt <= 0 ? -1 : den > 0 ? x / (den * nt / FS) : -2;
+  return { value: val(num[0]), value2: val(num[1]), neurons: den, spikes: tot.all,
+           burstSpikes: fl ? tot.burst : null, onsets: fl ? tot.onset : null,
+           a: sp.a, b: sp.b, seg: sp.seg, dtSec: nt / FS };
 }
 
 // ---------------------------------------------------------------- layout and view
@@ -872,12 +1012,22 @@ function drawOverlay() {
   }
 
   // colorbar
-  const s = state[state.mode], cx = px + pw + 18, cw = 14;
+  const s = state[state.mode], cx = px + pw + 18, cw = 14, over = state.spikes === "overlay";
   const lut = meta.colormaps[s.cmap];
   for (let i = 0; i < ph; i++) {
     const t = 1 - (i + 0.5) / ph, q = Math.round(t * 255);
-    ctx.fillStyle = `rgb(${lut[3 * q]},${lut[3 * q + 1]},${lut[3 * q + 2]})`;
-    ctx.fillRect(cx, py + i, cw, 1.5);
+    if (over) {     // burst (magenta) and tonic (green) ramps side by side
+      ctx.fillStyle = `rgb(${q},0,${q})`; ctx.fillRect(cx, py + i, cw / 2, 1.5);
+      ctx.fillStyle = `rgb(0,${q},0)`; ctx.fillRect(cx + cw / 2, py + i, cw / 2, 1.5);
+    } else {
+      ctx.fillStyle = `rgb(${lut[3 * q]},${lut[3 * q + 1]},${lut[3 * q + 2]})`;
+      ctx.fillRect(cx, py + i, cw, 1.5);
+    }
+  }
+  if (over) {
+    ctx.font = "10px Arial"; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+    ctx.fillStyle = "#e05ad0"; ctx.fillText("B", cx + cw / 4, py - 2);
+    ctx.fillStyle = "#5ad05a"; ctx.fillText("T", cx + 3 * cw / 4, py - 2);
   }
   ctx.font = "11px Arial"; ctx.fillStyle = ink2; ctx.textAlign = "left"; ctx.textBaseline = "middle";
   const l0 = Math.log10(s.vmin), l1 = Math.log10(s.vmax);
@@ -892,8 +1042,11 @@ function drawOverlay() {
     }
   ctx.save(); ctx.translate(cx + cw + 62, py + ph / 2); ctx.rotate(-Math.PI / 2);
   ctx.fillStyle = ink; ctx.textAlign = "center"; ctx.font = "12px Arial";
-  ctx.fillText(state.mode === "abs" ? "Mean firing rate (spikes/s)"
-                                    : `Rate / (session mean + ${state.eps} spikes/s)`, 0, 0);
+  const what = { all: "firing rate", tonic: "tonic firing rate", burst: "burst-spike rate",
+                 onset: "burst rate", overlay: "burst (B) and tonic (T) rates" }[state.spikes];
+  const unit = state.spikes === "onset" ? "bursts/s" : "spikes/s";
+  ctx.fillText(state.mode === "abs" ? `Mean ${what} (${unit})`
+               : `${what[0].toUpperCase() + what.slice(1)} / (session mean + ${state.eps} spikes/s)`, 0, 0);
   ctx.restore();
 }
 
@@ -909,7 +1062,11 @@ function updateStatus() {
       : `${state.ymode === "rastermap" ? "Rastermap positions" : "rows"} ${state.n0.toFixed(1)} to ` +
         `${state.n1.toFixed(1)} (${(state.n1 - state.n0).toFixed(1)} neurons) · ` +
         `1 cell = ${b}×${b} px = ${dn.toPrecision(3)} neurons × ${fmtDur(dt)} · `) +
-    `grid ${W}×${H} · ${nsp >= 1e5 ? (nsp / 1e6).toFixed(2) + " M" : nsp.toLocaleString("en-US")} spikes in window · ` +
+    `grid ${W}×${H} · ${nsp >= 1e5 ? (nsp / 1e6).toFixed(2) + " M" : nsp.toLocaleString("en-US")} ` +
+    `${{ all: "spikes", tonic: "spikes", overlay: "spikes", burst: "burst spikes", onset: "bursts" }[state.spikes]} in window · ` +
+    (state.spikes !== "all" && burst.flags ? `bursts: ${SETS.onset.n.toLocaleString("en-US")} ` +
+      `(${(100 * SETS.burst.n / ticks.length).toFixed(1)}% of spikes) at ≥${burst.params.S} ms silence, ` +
+      `ISI ≤${burst.params.M} ms, ≥${burst.params.K} spikes · ` : "") +
     `counted by ${lastDraw.path} · ${lastDraw.ms.toFixed(1)} ms to submit`;
 }
 
@@ -946,12 +1103,17 @@ function showHover(m) {
         (here.length > 1 ? ` (+${here.length - 1} more overlapping here)` : "");
     }
   }
+  const unit = state.spikes === "onset" ? "bursts/s" : "spikes/s";
+  const fmtV = (x) => norm ? `${x.toPrecision(3)} (rate / (session mean + ε))` : `${x.toPrecision(4)} ${unit}`;
   const valTxt = c.value === -1 ? "no samples in this column" : c.value === -2 ? "no neurons in this cell"
-    : norm ? `${c.value.toPrecision(3)} (rate / (session mean + ε))` : `${c.value.toPrecision(4)} spikes/s`;
+    : state.spikes === "overlay" ? `burst ${fmtV(c.value)}, tonic ${fmtV(c.value2)}`
+    : `${SPIKE_MODES[state.spikes].label.toLowerCase()}: ${fmtV(c.value)}`;
+  const burstTxt = c.burstSpikes === null ? "" :
+    ` (${c.burstSpikes} in ${c.onsets} burst${c.onsets === 1 ? "" : "s"}, ${c.spikes - c.burstSpikes} tonic)`;
   el.innerHTML =
     `<span class="k">Time</span> ${t.toFixed(4)} s<br>` +
     `<span class="k">Neuron</span> ${neuronTxt}<br>` +
-    `<span class="k">Cell</span> ${c.spikes} spikes over ${c.neurons.toPrecision(3)} neurons × ${fmtDur(c.dtSec)}<br>` +
+    `<span class="k">Cell</span> ${c.spikes} spikes${burstTxt} over ${c.neurons.toPrecision(3)} neurons × ${fmtDur(c.dtSec)}<br>` +
     `<span class="k">Value</span> ${valTxt}`;
   el.style.display = "block";
   const bx = m.x + 16 + el.offsetWidth > layout.sw ? m.x - el.offsetWidth - 12 : m.x + 16;
@@ -1129,6 +1291,11 @@ function syncControls() {
   document.getElementById("epsWrap").style.opacity = state.mode === "norm" ? 1 : 0.45;
   document.getElementById("block").value = String(state.block);
   document.getElementById("ymode").value = state.ymode;
+  document.getElementById("spikes").value = state.spikes;
+  document.getElementById("burstWrap").style.display = state.spikes === "all" ? "none" : "flex";
+  document.getElementById("bS").value = state.burst.S;
+  document.getElementById("bM").value = state.burst.M;
+  document.getElementById("bK").value = state.burst.K;
   document.getElementById("vmin").value = s.vmin;
   document.getElementById("vmax").value = s.vmax;
   document.getElementById("cmap").value = s.cmap;
@@ -1159,6 +1326,22 @@ function setupControls() {
   on("reset", "click", () => { resetView(); requestRender(); });
   on("allN", "click", () => { state.n0 = 0; state.n1 = lay().Y; requestRender(); });
   if (!LAY.rastermap) document.querySelector('#ymode option[value="rastermap"]').disabled = true;
+  // Burst detection takes about 1 s; say so, and let the message paint before it runs.
+  const renderAfterDetect = () => {
+    const p = state.burst, q = burst.params;
+    const needs = state.spikes !== "all" && (!burst.flags || p.S !== q.S || p.M !== q.M || p.K !== q.K);
+    if (!needs) return requestRender();
+    document.getElementById("status").textContent = "Detecting bursts...";
+    requestAnimationFrame(() => setTimeout(() => { ensureBursts(); requestRender(); }, 0));
+  };
+  on("spikes", "change", (e) => { state.spikes = e.target.value; syncControls(); renderAfterDetect(); });
+  for (const [id, key, lo, hi, intg] of [["bS", "S", 0, 10000, false], ["bM", "M", 0.1, 1000, false],
+                                          ["bK", "K", 2, 16, true]])
+    on(id, "change", (e) => {
+      let x = parseFloat(e.target.value);
+      if (Number.isFinite(x)) state.burst[key] = Math.min(hi, Math.max(lo, intg ? Math.round(x) : x));
+      syncControls(); renderAfterDetect();
+    });
   on("ymode", "change", (e) => {     // a new vertical coordinate: show all neurons
     state.ymode = e.target.value; state.n0 = 0; state.n1 = lay().Y; pinned = null;
     clampView(); requestRender();
@@ -1175,7 +1358,8 @@ function scheduleHash() {
   hashTimer = setTimeout(() => {
     const s = state[state.mode];
     const p = new URLSearchParams({ t0: state.t0.toFixed(6), t1: state.t1.toFixed(6),
-      n0: state.n0.toFixed(3), n1: state.n1.toFixed(3), ymode: state.ymode, mode: state.mode, eps: state.eps,
+      n0: state.n0.toFixed(3), n1: state.n1.toFixed(3), ymode: state.ymode, spikes: state.spikes,
+      bS: state.burst.S, bM: state.burst.M, bK: state.burst.K, mode: state.mode, eps: state.eps,
       block: state.block, vmin: s.vmin, vmax: s.vmax, cmap: s.cmap });
     history.replaceState(null, "", location.pathname + location.search + "#" + p);
   }, 300);
@@ -1183,6 +1367,11 @@ function scheduleHash() {
 function readHash() {
   const p = new URLSearchParams(location.hash.slice(1));
   if (Object.hasOwn(LAY, p.get("ymode") || "")) { state.ymode = p.get("ymode"); state.n0 = 0; state.n1 = lay().Y; }
+  if (Object.hasOwn(SPIKE_MODES, p.get("spikes") || "")) state.spikes = p.get("spikes");
+  for (const [k, lo, hi] of [["S", 0, 10000], ["M", 0.1, 1000], ["K", 2, 16]]) {
+    const x = parseFloat(p.get("b" + k));
+    if (Number.isFinite(x)) state.burst[k] = Math.min(hi, Math.max(lo, k === "K" ? Math.round(x) : x));
+  }
   for (const k of ["t0", "t1", "n0", "n1"]) {
     const x = parseFloat(p.get(k)); if (Number.isFinite(x)) state[k] = x;
   }
@@ -1202,42 +1391,68 @@ function readHash() {
 async function runTests() {
   const views = await (await fetch("refs/views.json")).json();
   const methods = res.search ? ["points", "search"] : ["points"];
-  const report = [];
+  const report = [], savedBurst = { ...state.burst };
+  // burst detection: the same spikes as bursts/detect_bursts.py (counts and index sums)
+  const bj = await (await fetch("refs/bursts.json")).json();
+  state.burst = { S: bj.params[0], M: bj.params[1], K: bj.params[2] };
+  ensureBursts();
+  const burstCheck = { n_burst: [SETS.burst.n, bj.n_burst], n_onset: [SETS.onset.n, bj.n_onset],
+                       sum_index_burst: [SETS.burst.sumIdx, bj.sum_index_burst],
+                       sum_index_onset: [SETS.onset.sumIdx, bj.sum_index_onset] };
+  burstCheck.match = Object.values(burstCheck).every(([a, b]) => a === b);
+  const compare = (g, ref) => {
+    let maxRel = 0, nBad = 0, sumG = 0, sumR = 0, maxAbs = 0;
+    for (let i = 0; i < g.length; i++) {
+      const d = Math.abs(g[i] - ref[i]), rel = d / Math.max(Math.abs(ref[i]), 1e-12);
+      sumG += g[i]; sumR += ref[i];
+      if (d > maxAbs) maxAbs = d;
+      if (!(ref[i] === 0 && g[i] === 0) && rel > maxRel) maxRel = rel;
+      if (rel > 1e-3 && d > 1e-6) nBad++;
+    }
+    return { nBad, maxRel, maxAbs, sumRatio: sumG / sumR };
+  };
   for (const tv of views) {
     const ref = new Float32Array(await (await fetch("refs/" + tv.file)).arrayBuffer());
+    const ref2 = tv.file2 ? new Float32Array(await (await fetch("refs/" + tv.file2)).arrayBuffer()) : null;
+    const spikes = tv.spikes || "all";
+    if (tv.burst_params) { state.burst = { S: tv.burst_params[0], M: tv.burst_params[1], K: tv.burst_params[2] }; ensureBursts(); }
     const v = { T0: tv.T0, dT: tv.dT, n0: tv.n0, n1: tv.n1 };
     const L = LAY[tv.layout || "rows"];
     if (!L) { report.push({ name: tv.name, skipped: "layout not available" }); continue; }
     if (tv.h !== undefined && tv.h !== L.unit && !L.frac) throw new Error("reference used another band height");
     let pointCounts = null;
     for (const method of methods) {
-      const cs = computeValues(v, tv.W, tv.H, tv.norm, tv.eps, method, L);
-      const g = readValues(tv.W, tv.H);
+      const cs = computeValues(v, tv.W, tv.H, tv.norm, tv.eps, method, L, spikes);
+      const g = readValues(tv.W, tv.H), cmp2 = ref2 ? compare(readValues(tv.W, tv.H, 2), ref2) : null;
       // raw pass-1 counts must be bitwise identical between methods (integers in float32)
-      const counts = readCounts(tv.W, cs.R);
+      const twoSets = !!SPIKE_MODES[spikes].B;
+      const counts = readCounts(tv.W, cs.R), counts2 = twoSets ? readCounts(tv.W, cs.R, res.counts2) : null;
       let countsDiffer = 0;
-      if (!pointCounts) pointCounts = counts;
-      else for (let i = 0; i < counts.length; i++) if (counts[i] !== pointCounts[i]) countsDiffer++;
-      let maxRel = 0, nBad = 0, sumG = 0, sumR = 0, maxAbs = 0;
-      for (let i = 0; i < g.length; i++) {
-        const d = Math.abs(g[i] - ref[i]), rel = d / Math.max(Math.abs(ref[i]), 1e-12);
-        sumG += g[i]; sumR += ref[i];
-        if (d > maxAbs) maxAbs = d;
-        if (!(ref[i] === 0 && g[i] === 0) && rel > maxRel) maxRel = rel;
-        if (rel > 1e-3 && d > 1e-6) nBad++;
+      if (!pointCounts) pointCounts = [counts, counts2];
+      else {
+        for (let i = 0; i < counts.length; i++) if (counts[i] !== pointCounts[0][i]) countsDiffer++;
+        if (twoSets) for (let i = 0; i < counts2.length; i++) if (counts2[i] !== pointCounts[1][i]) countsDiffer++;
       }
+      let { nBad, maxRel, maxAbs, sumRatio } = compare(g, ref);
+      if (cmp2) { nBad += cmp2.nBad; maxRel = Math.max(maxRel, cmp2.maxRel); maxAbs = Math.max(maxAbs, cmp2.maxAbs); }
       // CPU path (hover) at 40 random cells
       let cpuMax = 0, seed = 12345;
       const rnd = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
       for (let q = 0; q < 40; q++) {
         const j = Math.floor(rnd() * tv.W), k = Math.floor(rnd() * tv.H);
-        const c = cellCPU(v, tv.W, tv.H, j, k, tv.norm, tv.eps, L).value, r = ref[k * tv.W + j];
-        cpuMax = Math.max(cpuMax, Math.abs(c - r) / Math.max(Math.abs(r), 1e-12));
+        const cc = cellCPU(v, tv.W, tv.H, j, k, tv.norm, tv.eps, L, spikes), r = ref[k * tv.W + j];
+        cpuMax = Math.max(cpuMax, Math.abs(cc.value - r) / Math.max(Math.abs(r), 1e-12));
+        if (ref2) {
+          const r2 = ref2[k * tv.W + j];
+          cpuMax = Math.max(cpuMax, Math.abs(cc.value2 - r2) / Math.max(Math.abs(r2), 1e-12));
+        }
       }
-      report.push({ name: tv.name, layout: L.name, method, path: cs.path, countsDiffer, W: tv.W, H: tv.H, cells: g.length, badCells: nBad,
-                    fracBad: nBad / g.length, maxRel, maxAbs, sumRatio: sumG / sumR, cpuMaxRel: cpuMax });
+      report.push({ name: tv.name, layout: L.name, spikes, method, path: cs.path, countsDiffer, W: tv.W, H: tv.H, cells: g.length, badCells: nBad,
+                    fracBad: nBad / g.length, maxRel, maxAbs, sumRatio, cpuMaxRel: cpuMax });
     }
   }
+  state.burst = savedBurst;
+  if (burst.flags) ensureBursts();      // back to the user's burst definition
   // timing of the whole-session, all-neuron view at the current grid size, per method
   const W = layout.W, H = layout.H, fullViewMs = {};
   const v = { T0: TS * FS, dT: (TE - TS) * FS / W, n0: 0, n1: N };
@@ -1246,12 +1461,12 @@ async function runTests() {
     const times = (fullViewMs[method] = []);
     for (let r = 0; r < 6; r++) {
       const t = performance.now();
-      computeValues(v, W, H, false, 0.1, method, LAY.rows);
+      computeValues(v, W, H, false, 0.1, method, LAY.rows, "all");
       gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, px);   // forces completion
       times.push(performance.now() - t);
     }
   }
-  const out = { report, fullViewMs, grid: [W, H], floatBlend: res.floatBlend,
+  const out = { report, burstCheck, fullViewMs, grid: [W, H], floatBlend: res.floatBlend,
                 search: !!res.search, searchNote: res.searchNote,
                 searchRatio: res.search && res.search.ratio, calib: res.search && res.search.calib,
                 renderer: gl.getParameter(gl.RENDERER) };
@@ -1275,6 +1490,11 @@ async function runTests() {
     syncControls();
     computeLayout();
     setupInteraction();
+    if (state.spikes !== "all") {        // a burst mode from the URL: detect before showing
+      document.getElementById("loadMsg").textContent = "Detecting bursts";
+      await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+      ensureBursts();
+    }
     document.getElementById("loading").style.display = "none";
     render();
     if (new URLSearchParams(location.search).has("test")) {
@@ -1288,7 +1508,8 @@ async function runTests() {
       document.getElementById("status").textContent =
         `Self-test: ${r.report.length} view x method runs, worst fraction of mismatched cells ` +
         `${worst.toExponential(2)}; counts differing between methods: ${nDiff}; ` +
-        `readout (CPU) max relative error ${cpuWorst.toExponential(1)}; full view ${r.grid[0]}x${r.grid[1]}: ${ms}; ` +
+        `readout (CPU) max relative error ${cpuWorst.toExponential(1)}; ` +
+        `burst detection ${r.burstCheck.match ? "matches" : "DIFFERS FROM"} Python; full view ${r.grid[0]}x${r.grid[1]}: ${ms}; ` +
         `details in console / window.__testResults`;
       requestRender();
     }

@@ -63,6 +63,17 @@ Controls in the top bar:
     here. That ordering is one good ordering, not a unique one: reruns with another seed or
     bin size keep only about 15% of each neuron's 20 nearest neighbors. The colored strip on
     the left shows each neuron's probe.
+- **Spikes**: which spikes count. *All* (default); *Tonic only*; *Burst spikes*; *Burst
+  onsets* (only each burst's first spike, so the value is bursts/s); or *Burst + tonic*,
+  which draws burst spikes black to magenta and tonic spikes black to green and adds the two,
+  so a cell with plenty of both looks white. Both use the same color range; burst-spike rates
+  are much lower than tonic rates, so bursts look dim when zoomed far out.
+  A burst is a run of at least K spikes of one unit with every ISI at most M ms, whose first
+  spike follows at least S ms without a spike from that unit. S, M and K are set in the boxes
+  that appear beside the menu; the default (100 ms, 4 ms, 2) is the usual criterion for
+  thalamic low-threshold bursts (Lu, Guido & Sherman 1992). Changing them re-runs detection
+  in the browser (about 1 s). How this definition was chosen, with diagnostic figures, is in
+  `bursts/README.md`.
 - **Cell**: the aggregation unit, 1, 2 (default), 3, 4, 6 or 8 screen pixels square. Larger
   cells average over more neurons and time, and individual spikes become bigger blocks.
 - **Color range** (log scale) and **Map**.
@@ -125,6 +136,13 @@ range), and regrouped by neuron row, each row in time order. Each redraw has thr
    computed in float64 on the CPU.
 3. Applies the log color map.
 
+Burst modes: the browser classifies every spike once (one pass in time order), then keeps the
+burst spikes and the burst onsets as two extra spike sets on the GPU (about 30 MB), each
+countable by either method. Pass 1 then counts two sets (for example all spikes and burst
+spikes), and pass 2 combines the two counts per texel before averaging, so tonic = all minus
+burst is formed from exact integer counts. In the overlay, pass 2 outputs burst and tonic
+values side by side and pass 3 adds their two color ramps.
+
 The hover readout recomputes its cell on the CPU from the raw spikes.
 
 Speed, whole session with all 61 M spikes and all neurons, GPU time per redraw:
@@ -143,7 +161,7 @@ about 10 ms. Before search, panning the whole session ran at about 6 frames/s on
 
 - `reference.py`: float64 CPU implementation of the definition above. Its `__main__` checks it
   against a slow per-cell loop.
-- `make_refs.py`: writes reference values for 39 views to `refs/` in this folder (about 185 MB,
+- `make_refs.py`: writes reference values for 45 views to `refs/` in this folder (about 185 MB,
   not in git: run it once before using `?test=1`; it reads the packed spikes). The first
   22 (all sorted by depth) cover:
   - whole-session views in both modes, a 3000 x 1500 grid, and a grid with Cell = 3;
@@ -156,7 +174,12 @@ about 10 ms. Before search, panning the whole session ran at about 6 frames/s on
   The other 17 cover plotted-by-depth views (whole session in both modes, one shank, a whole
   probe, a shank boundary, a 30 µm and a 2 µm deep zoom where cells are much thinner than a
   neuron's band) and Rastermap views (whole session in both modes, 200 neurons, 2 neurons at
-  50 ms), plus 3 random views of each.
+  50 ms), plus 3 random views of each. The last 6 cover the burst modes with the default
+  burst definition: burst spikes, tonic spikes (normalized), burst onsets on Probe 6 shank 0,
+  the overlay in the window of the 1110.6 s burst episode (both of its outputs), burst spikes
+  plotted by depth, and tonic spikes in Rastermap order. It also writes `refs/bursts.json`:
+  the number of burst spikes and onsets, and the sums of their spike indices, from
+  `bursts/detect_bursts.py`, which the self-test compares with the browser's own detection.
 - `http://localhost:8765/?test=1` renders each view on the GPU, once with each counting
   method, and reads the values back. It then:
   - compares them with the references;
@@ -179,6 +202,13 @@ about 10 ms. Before search, panning the whole session ran at about 6 frames/s on
   edge in the reference and counts a 2e-12 µm sliver of the next neuron, while the viewer
   computes band positions in exact integer steps of 0.1 µm. Rewriting `reference.py` for the
   three layouts left the 22 original reference files unchanged.
+- Result on 2026-11-22 with the burst modes (M3 Max, built-in Chromium, from the packed data):
+  0 mismatched cells in all 45 views with both counting methods, raw counts identical between
+  methods. The browser's burst detection matches the Python detector exactly (2,193,316 burst
+  spikes in 787,718 bursts, and identical index sums). The self-test checks only the default
+  definition; a one-off check of 50 ms, 6 ms, 3 spikes also matched exactly (2,297,895 burst
+  spikes in 572,897 bursts), and an independent review compared the two detectors on 900
+  random synthetic cases (K from 2 to 6, fractional thresholds, zero ISIs) with no mismatch.
 - A second independent review (of the layouts and readout changes) found no value bug in
   normal cases. It found a rare float32 edge in the depth layout (a cell covered only by
   slivers of bands could show as empty; such cells now weight their slivers equally), and UI
@@ -231,6 +261,7 @@ present, and the packed ones otherwise.
 | `prep_rastermap.py` | Copies the Rastermap ordering to `data/rastermap.json` (checks it is a permutation of the rows) |
 | `reference.py`, `make_refs.py` | Reference implementation and test-case writer |
 | `rastermap/` | How the Rastermap order was computed and checked (its own README) |
+| `bursts/` | The burst definition: detector, diagnostic figures, and literature notes (its own README) |
 | `plan/` | The original design plan, example stills and the script that made them (paths there point to the Windows desktop) |
 | `.nojekyll` | Tells GitHub Pages to serve the files as they are |
 
