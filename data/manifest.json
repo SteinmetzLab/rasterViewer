@@ -1,0 +1,41 @@
+{
+ "format": "rasterViewer-spikes-1",
+ "n_spikes": 60997315,
+ "tick0": 59055,
+ "tick_escapes": [],
+ "checksums": {
+  "sum_ticks": 2252298692531133,
+  "sum_rows": 143519975409,
+  "sum_rows_x_index_mod_1024": 73414789046637,
+  "first_tick": 59055,
+  "last_tick": 72924330
+ },
+ "streams": {
+  "ticks": {
+   "raw_bytes": 60997314,
+   "parts": [
+    {
+     "file": "spikes_ticks.gz.00",
+     "bytes": 19166755
+    }
+   ]
+  },
+  "rows": {
+   "raw_bytes": 121994630,
+   "parts": [
+    {
+     "file": "spikes_rows.gz.00",
+     "bytes": 45000000
+    },
+    {
+     "file": "spikes_rows.gz.01",
+     "bytes": 45000000
+    },
+    {
+     "file": "spikes_rows.gz.02",
+     "bytes": 5563194
+    }
+   ]
+  }
+ }
+}

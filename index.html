@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Population raster viewer</title>
+<style>
+  :root {
+    --bg: #0d0f12; --panel: #161a1f; --ink: #e6e9ed; --ink2: #a9b0b8; --ink3: #6c747d;
+    --line: #2a3038; --accent: #4ea8ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font-family: Arial, Helvetica, sans-serif; font-size: 13px; overflow: hidden; }
+  #bar { position: absolute; left: 0; right: 0; top: 0; height: 44px; display: flex;
+    align-items: center; gap: 14px; padding: 0 12px; background: var(--panel);
+    border-bottom: 1px solid var(--line); white-space: nowrap; overflow-x: auto; }
+  #bar label { color: var(--ink2); display: flex; align-items: center; gap: 5px; }
+  #bar input[type=number] { width: 62px; }
+  #bar input, #bar select, #bar button { background: #0f1216; color: var(--ink);
+    border: 1px solid var(--line); border-radius: 4px; padding: 3px 5px; font: inherit; }
+  #bar button { cursor: pointer; }
+  #bar button:hover { border-color: var(--accent); }
+  .sep { width: 1px; height: 24px; background: var(--line); }
+  #title { font-weight: bold; color: var(--ink); }
+  #stage { position: absolute; left: 0; right: 0; top: 44px; bottom: 26px; }
+  #gl { position: absolute; image-rendering: pixelated; image-rendering: crisp-edges;
+    cursor: crosshair; }
+  #overlay { position: absolute; left: 0; top: 0; pointer-events: none; }
+  #status { position: absolute; left: 0; right: 0; bottom: 0; height: 26px; padding: 5px 12px;
+    background: var(--panel); border-top: 1px solid var(--line); color: var(--ink2);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #hover { position: absolute; pointer-events: none; background: rgba(22,26,31,0.94);
+    border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; color: var(--ink);
+    line-height: 1.45; display: none; white-space: nowrap; font-size: 12px; }
+  #hover .k { color: var(--ink2); }
+  #box { position: absolute; border: 1px dashed var(--ink); background: rgba(255,255,255,0.08);
+    pointer-events: none; display: none; }
+  #loading { position: absolute; inset: 0; display: flex; align-items: center;
+    justify-content: center; flex-direction: column; gap: 10px; background: var(--bg);
+    font-size: 15px; color: var(--ink2); z-index: 5; }
+  #help { position: absolute; right: 12px; top: 52px; width: 340px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; display: none;
+    line-height: 1.5; z-index: 4; color: var(--ink2); }
+  #help b { color: var(--ink); }
+</style>
+</head>
+<body>
+<div id="bar">
+  <span id="title">FD_016 population raster</span>
+  <div class="sep"></div>
+  <label>Color by
+    <select id="mode">
+      <option value="abs">Firing rate (spikes/s)</option>
+      <option value="norm">Rate / (session mean + ε)</option>
+    </select>
+  </label>
+  <label id="epsWrap" title="Softening rate added to each neuron's session mean, in spikes/s">ε
+    <input id="eps" type="number" min="0" step="0.05" value="0.1"> spikes/s</label>
+  <label title="How neurons are placed on the vertical axis">Neurons
+    <select id="ymode">
+      <option value="rows">Sorted by depth</option>
+      <option value="depth">Plotted by depth (to scale)</option>
+      <option value="rastermap">Rastermap order</option>
+    </select>
+  </label>
+  <label title="Each displayed cell averages over a block of N x N screen pixels">Cell
+    <select id="block"><option>1</option><option selected>2</option><option>3</option><option>4</option>
+      <option>6</option><option>8</option></select> px</label>
+  <div class="sep"></div>
+  <label>Color range <input id="vmin" type="number" step="any"> to
+    <input id="vmax" type="number" step="any"></label>
+  <label>Map <select id="cmap"></select></label>
+  <div class="sep"></div>
+  <button id="reset" title="Whole session, all neurons (R)">Reset</button>
+  <button id="allN" title="Show all neurons, keep time window (A)">All neurons</button>
+  <button id="allT" title="Whole session, keep neurons (S)">Whole session</button>
+  <button id="helpBtn">Help</button>
+</div>
+<div id="stage">
+  <canvas id="gl"></canvas>
+  <canvas id="overlay"></canvas>
+  <div id="box"></div>
+  <div id="hover"></div>
+</div>
+<div id="status">Loading</div>
+<div id="help">
+  <b>Zoom time:</b> mouse wheel over the raster (or over the time axis). On a trackpad:
+  two-finger vertical scroll, or pinch.<br>
+  <b>Zoom neurons:</b> Shift + wheel, or wheel over the neuron axis on the left.<br>
+  <b>Pan:</b> drag. Arrow keys also pan; so does a sideways two-finger swipe.<br>
+  <b>Box zoom:</b> Ctrl + drag, ⌘ + drag on a Mac, or right-drag.<br>
+  <b>Jump:</b> click or drag in the overview strip at the top.<br>
+  <b>Zoom to a probe or shank:</b> click its label (or its color band) on the left.<br>
+  <b>Readout:</b> click a cell to show its values (until the view changes; Esc clears), or
+  hold Alt (Option on a Mac) to have it follow the pointer.<br>
+  <b>Keys:</b> R reset, A all neurons, S whole session, + / − zoom time.<br><br>
+  Each displayed cell is the mean firing rate over every neuron and instant it covers.
+  <b>Neurons</b> sets the vertical axis: sorted by depth (probe, shank, then position along
+  the shank, shallow at top, one row per neuron); plotted by depth (each shank to scale, each
+  neuron a 15 µm band at its position, so neurons at similar depths overlap and gaps show
+  as dark gray); or Rastermap order (similar neurons adjacent). In the first two, cells
+  never average across a shank boundary: a cell that straddles one uses only the neurons of
+  the shank under its center. In Rastermap order, cells average across probes.
+  The view is saved in the URL, so it can be bookmarked.
+</div>
+<div id="loading"><div id="loadMsg">Loading spikes</div></div>
+<script src="viewer.js"></script>
+</body>
+</html>

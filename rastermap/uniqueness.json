@@ -1,0 +1,369 @@
+{
+ "definition": "Why do Rastermap orderings differ between runs, and do the different ones score differently?\n\nRastermap has three stages (rastermap 1.0 source: rastermap.py, cluster.py, sort.py, upsample.py):\n  1. scaled k-means of the neurons' PC loadings into 100 clusters (kmeans++ init from the seed),\n  2. ordering of the 100 clusters by a greedy local search (move or flip one segment at a time)\n     that maximizes sum_ij cc_ij * BBt_ij, BBt = -log(eps + |x_i - x_j|) normalized; it stops\n     when no single move improves the score by more than 1e-3,\n  3. each neuron is placed at the best-matching point of a 1,000-point grid interpolated between\n     the ordered cluster centers. Neurons on the same grid point tie, and argsort breaks the\n     tie by input order (here: probe, shank, y).\n\nThis script:\n  A. fits 10 seeds on the FIRST half (100 ms bins) and scores every ordering on the first half\n     (train) and the second half (test) with a neuron-level version of Rastermap's objective,\n     S(order) = mean over pairs i<j of C[o_i, o_j] * w(|i - j| / N), w = the same -log kernel\n     normalized to mean 1 over pairs, C = correlation of the 100 ms counts. Also the mean\n     correlation of neighbors at k = 1, 10, 50. Depth order and random orders for reference.\n  B. for seed 0's clusters, reruns stage 2 from 30 random starting orders, to see whether the\n     cluster ordering search itself lands in different local optima.\n  C. counts ties from stage 3.\nWrites uniqueness.json.\n",
+ "per_seed": {
+  "0": {
+   "train_first_half": {
+    "S": 0.02944,
+    "corr_k1": 0.1172,
+    "corr_k10": 0.0985,
+    "corr_k50": 0.0595
+   },
+   "test_second_half": {
+    "S": 0.02616,
+    "corr_k1": 0.097,
+    "corr_k10": 0.08,
+    "corr_k50": 0.0492
+   },
+   "cluster_objective": 321.56,
+   "n_distinct_positions": 735,
+   "mean_neurons_per_position": 5.88
+  },
+  "1": {
+   "train_first_half": {
+    "S": 0.02981,
+    "corr_k1": 0.1163,
+    "corr_k10": 0.0969,
+    "corr_k50": 0.0605
+   },
+   "test_second_half": {
+    "S": 0.02684,
+    "corr_k1": 0.0958,
+    "corr_k10": 0.0793,
+    "corr_k50": 0.0494
+   },
+   "cluster_objective": 318.49,
+   "n_distinct_positions": 729,
+   "mean_neurons_per_position": 5.93
+  },
+  "2": {
+   "train_first_half": {
+    "S": 0.02968,
+    "corr_k1": 0.1156,
+    "corr_k10": 0.0974,
+    "corr_k50": 0.0588
+   },
+   "test_second_half": {
+    "S": 0.02591,
+    "corr_k1": 0.0961,
+    "corr_k10": 0.0794,
+    "corr_k50": 0.049
+   },
+   "cluster_objective": 329.93,
+   "n_distinct_positions": 764,
+   "mean_neurons_per_position": 5.66
+  },
+  "3": {
+   "train_first_half": {
+    "S": 0.02996,
+    "corr_k1": 0.1196,
+    "corr_k10": 0.0968,
+    "corr_k50": 0.0608
+   },
+   "test_second_half": {
+    "S": 0.02617,
+    "corr_k1": 0.099,
+    "corr_k10": 0.0792,
+    "corr_k50": 0.0504
+   },
+   "cluster_objective": 317.48,
+   "n_distinct_positions": 756,
+   "mean_neurons_per_position": 5.72
+  },
+  "4": {
+   "train_first_half": {
+    "S": 0.03026,
+    "corr_k1": 0.1213,
+    "corr_k10": 0.0987,
+    "corr_k50": 0.0589
+   },
+   "test_second_half": {
+    "S": 0.02662,
+    "corr_k1": 0.1004,
+    "corr_k10": 0.0805,
+    "corr_k50": 0.0482
+   },
+   "cluster_objective": 377.29,
+   "n_distinct_positions": 757,
+   "mean_neurons_per_position": 5.71
+  },
+  "5": {
+   "train_first_half": {
+    "S": 0.0304,
+    "corr_k1": 0.1176,
+    "corr_k10": 0.099,
+    "corr_k50": 0.0604
+   },
+   "test_second_half": {
+    "S": 0.02655,
+    "corr_k1": 0.0972,
+    "corr_k10": 0.0808,
+    "corr_k50": 0.0493
+   },
+   "cluster_objective": 332.23,
+   "n_distinct_positions": 755,
+   "mean_neurons_per_position": 5.73
+  },
+  "6": {
+   "train_first_half": {
+    "S": 0.02975,
+    "corr_k1": 0.1177,
+    "corr_k10": 0.097,
+    "corr_k50": 0.0596
+   },
+   "test_second_half": {
+    "S": 0.026,
+    "corr_k1": 0.098,
+    "corr_k10": 0.0784,
+    "corr_k50": 0.0485
+   },
+   "cluster_objective": 319.74,
+   "n_distinct_positions": 724,
+   "mean_neurons_per_position": 5.97
+  },
+  "7": {
+   "train_first_half": {
+    "S": 0.02972,
+    "corr_k1": 0.1165,
+    "corr_k10": 0.0973,
+    "corr_k50": 0.0569
+   },
+   "test_second_half": {
+    "S": 0.02591,
+    "corr_k1": 0.096,
+    "corr_k10": 0.0787,
+    "corr_k50": 0.0468
+   },
+   "cluster_objective": 341.19,
+   "n_distinct_positions": 753,
+   "mean_neurons_per_position": 5.74
+  },
+  "8": {
+   "train_first_half": {
+    "S": 0.03084,
+    "corr_k1": 0.116,
+    "corr_k10": 0.0975,
+    "corr_k50": 0.061
+   },
+   "test_second_half": {
+    "S": 0.0268,
+    "corr_k1": 0.0964,
+    "corr_k10": 0.0792,
+    "corr_k50": 0.0506
+   },
+   "cluster_objective": 343.02,
+   "n_distinct_positions": 747,
+   "mean_neurons_per_position": 5.79
+  },
+  "9": {
+   "train_first_half": {
+    "S": 0.02937,
+    "corr_k1": 0.1176,
+    "corr_k10": 0.0985,
+    "corr_k50": 0.0585
+   },
+   "test_second_half": {
+    "S": 0.02601,
+    "corr_k1": 0.0976,
+    "corr_k10": 0.0808,
+    "corr_k50": 0.0481
+   },
+   "cluster_objective": 324.09,
+   "n_distinct_positions": 729,
+   "mean_neurons_per_position": 5.93
+  }
+ },
+ "reference": {
+  "depth_order": {
+   "train_first_half": {
+    "S": 0.0213,
+    "corr_k1": 0.0761,
+    "corr_k10": 0.0515,
+    "corr_k50": 0.0245
+   },
+   "test_second_half": {
+    "S": 0.01885,
+    "corr_k1": 0.0708,
+    "corr_k10": 0.0477,
+    "corr_k50": 0.0215
+   }
+  },
+  "random_order": [
+   {
+    "train_first_half": {
+     "S": 0.01747,
+     "corr_k1": 0.0171,
+     "corr_k10": 0.0182,
+     "corr_k50": 0.0175
+    },
+    "test_second_half": {
+     "S": 0.01536,
+     "corr_k1": 0.0157,
+     "corr_k10": 0.0159,
+     "corr_k50": 0.0148
+    }
+   },
+   {
+    "train_first_half": {
+     "S": 0.01751,
+     "corr_k1": 0.0171,
+     "corr_k10": 0.0174,
+     "corr_k50": 0.0161
+    },
+    "test_second_half": {
+     "S": 0.01542,
+     "corr_k1": 0.0146,
+     "corr_k10": 0.0153,
+     "corr_k50": 0.0143
+    }
+   },
+   {
+    "train_first_half": {
+     "S": 0.01743,
+     "corr_k1": 0.018,
+     "corr_k10": 0.0188,
+     "corr_k50": 0.0172
+    },
+    "test_second_half": {
+     "S": 0.01531,
+     "corr_k1": 0.0158,
+     "corr_k10": 0.0164,
+     "corr_k50": 0.0154
+    }
+   }
+  ]
+ },
+ "seed_pairwise_abs_spearman": {
+  "mean": 0.743,
+  "min": 0.656,
+  "max": 0.83
+ },
+ "stage2_restarts_seed0": {
+  "default_start_S": 321.56,
+  "restart_S_min": 316.48,
+  "restart_S_median": 324.19,
+  "restart_S_max": 326.54,
+  "n_restarts_beating_default": 20,
+  "restarts": [
+   {
+    "S": 326.54,
+    "spearman_vs_default": 0.862
+   },
+   {
+    "S": 325.01,
+    "spearman_vs_default": 0.83
+   },
+   {
+    "S": 325.88,
+    "spearman_vs_default": 0.854
+   },
+   {
+    "S": 316.76,
+    "spearman_vs_default": 0.741
+   },
+   {
+    "S": 326.27,
+    "spearman_vs_default": 0.859
+   },
+   {
+    "S": 316.9,
+    "spearman_vs_default": 0.81
+   },
+   {
+    "S": 324.15,
+    "spearman_vs_default": 0.866
+   },
+   {
+    "S": 326.06,
+    "spearman_vs_default": 0.856
+   },
+   {
+    "S": 325.95,
+    "spearman_vs_default": 0.861
+   },
+   {
+    "S": 319.34,
+    "spearman_vs_default": 0.771
+   },
+   {
+    "S": 326.11,
+    "spearman_vs_default": 0.861
+   },
+   {
+    "S": 317.43,
+    "spearman_vs_default": 0.847
+   },
+   {
+    "S": 318.33,
+    "spearman_vs_default": 0.811
+   },
+   {
+    "S": 316.48,
+    "spearman_vs_default": 0.76
+   },
+   {
+    "S": 325.92,
+    "spearman_vs_default": 0.858
+   },
+   {
+    "S": 324.23,
+    "spearman_vs_default": 0.827
+   },
+   {
+    "S": 325.0,
+    "spearman_vs_default": 0.83
+   },
+   {
+    "S": 318.55,
+    "spearman_vs_default": 0.791
+   },
+   {
+    "S": 326.19,
+    "spearman_vs_default": 0.863
+   },
+   {
+    "S": 319.39,
+    "spearman_vs_default": 0.782
+   },
+   {
+    "S": 323.18,
+    "spearman_vs_default": 0.845
+   },
+   {
+    "S": 324.28,
+    "spearman_vs_default": 0.813
+   },
+   {
+    "S": 326.09,
+    "spearman_vs_default": 0.86
+   },
+   {
+    "S": 323.25,
+    "spearman_vs_default": 0.928
+   },
+   {
+    "S": 320.04,
+    "spearman_vs_default": 0.77
+   },
+   {
+    "S": 317.47,
+    "spearman_vs_default": 0.85
+   },
+   {
+    "S": 322.67,
+    "spearman_vs_default": 0.805
+   },
+   {
+    "S": 326.12,
+    "spearman_vs_default": 0.863
+   },
+   {
+    "S": 326.12,
+    "spearman_vs_default": 0.863
+   },
+   {
+    "S": 323.83,
+    "spearman_vs_default": 0.923
+   }
+  ]
+ }
+}

@@ -1,0 +1,157 @@
+{
+ "n": 4325,
+ "stability_vs_main": {
+  "seed1": {
+   "spearman_abs": 0.6,
+   "neighbor_overlap_k20": 0.159,
+   "neighbor_overlap_k100": 0.304
+  },
+  "bin25ms": {
+   "spearman_abs": 0.411,
+   "neighbor_overlap_k20": 0.112,
+   "neighbor_overlap_k100": 0.258
+  },
+  "bin250ms": {
+   "spearman_abs": 0.56,
+   "neighbor_overlap_k20": 0.139,
+   "neighbor_overlap_k100": 0.263
+  },
+  "firsthalf": {
+   "spearman_abs": 0.653,
+   "neighbor_overlap_k20": 0.128,
+   "neighbor_overlap_k100": 0.245
+  }
+ },
+ "neighbor_overlap_chance_k20": 0.0046,
+ "second_half_mean_corr_by_lag": {
+  "rastermap_fit_on_first_half": {
+   "1": 0.0973,
+   "2": 0.0946,
+   "3": 0.0916,
+   "5": 0.0882,
+   "10": 0.0804,
+   "50": 0.0494
+  },
+  "rastermap_fit_on_all (not held out)": {
+   "1": 0.1058,
+   "2": 0.0969,
+   "3": 0.0945,
+   "5": 0.0911,
+   "10": 0.0843,
+   "50": 0.053
+  },
+  "depth_order (viewer rows)": {
+   "1": 0.071,
+   "2": 0.0679,
+   "3": 0.0652,
+   "5": 0.0594,
+   "10": 0.0479,
+   "50": 0.0216
+  },
+  "random_order (mean of 5)": {
+   "1": 0.0157,
+   "2": 0.0149,
+   "3": 0.0153,
+   "5": 0.0156,
+   "10": 0.0156,
+   "50": 0.0152
+  }
+ },
+ "adjacent_pairs_crossing_probe": {
+  "rastermap": 0.483,
+  "depth_order": 0.0014
+ },
+ "spearman_position_vs_log_rate": -0.312,
+ "probe_counts_in_10_blocks": [
+  [
+   21,
+   37,
+   94,
+   71,
+   23,
+   94,
+   93
+  ],
+  [
+   33,
+   53,
+   48,
+   71,
+   7,
+   98,
+   123
+  ],
+  [
+   45,
+   42,
+   44,
+   70,
+   21,
+   90,
+   121
+  ],
+  [
+   11,
+   32,
+   60,
+   121,
+   12,
+   51,
+   146
+  ],
+  [
+   31,
+   30,
+   27,
+   55,
+   41,
+   186,
+   63
+  ],
+  [
+   116,
+   129,
+   37,
+   14,
+   61,
+   33,
+   42
+  ],
+  [
+   303,
+   109,
+   9,
+   4,
+   0,
+   7,
+   0
+  ],
+  [
+   117,
+   33,
+   128,
+   41,
+   1,
+   18,
+   94
+  ],
+  [
+   7,
+   21,
+   59,
+   53,
+   3,
+   74,
+   215
+  ],
+  [
+   7,
+   65,
+   95,
+   109,
+   9,
+   65,
+   82
+  ]
+ ]
+}
