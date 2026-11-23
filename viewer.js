@@ -74,6 +74,7 @@ async function load() {
   if (rr.ok) rastermap = await rr.json();
   const ro = await fetch(DATA + "orderings.json");       // optional: further orderings of the neurons
   if (ro.ok) orderings = await ro.json();
+  await RawUnderlay.load();                              // optional: raw voltage (raw_underlay.js)
 }
 
 // Spikes packed by pack_data.py: gzip streams split into parts. Decoded while downloading,
@@ -359,6 +360,8 @@ precision highp float; precision highp sampler2D;
 uniform sampler2D u_val, u_lut, u_lut2;
 uniform float u_lmin, u_lmax;
 uniform int u_overlay;         // 1: r through u_lut plus b through u_lut2, added
+uniform vec4 u_under;          // fragment-coordinate box (x0, y0, x1, y1) with raw voltage underneath
+uniform float u_ualpha;        // opacity of the cells with spikes in that box; < 0: no such box
 out vec4 o;
 float tOf(float v) { return v > 0.0 ? clamp((log(v) - u_lmin) / (u_lmax - u_lmin), 0.0, 1.0) : 0.0; }
 vec4 lut(sampler2D s, float t) { return texelFetch(s, ivec2(int(t * 255.0 + 0.5), 0), 0); }
@@ -369,11 +372,18 @@ void main() {
   // The value stays -2, so the readout and ?test=1 still tell the two cases apart.
   if (v < -1.5) v = 0.0;
   if (v < 0.0) { o = vec4(0.25, 0.25, 0.25, 1.0); return; }    // column holds no samples
+  float alpha = 1.0;
+  if (u_ualpha >= 0.0 && all(greaterThanEqual(gl_FragCoord.xy, u_under.xy)) &&
+      all(lessThan(gl_FragCoord.xy, u_under.zw))) {
+    bool spikes = v > 0.0 || (u_overlay == 1 && val.b > 0.0);
+    if (!spikes) { o = vec4(0.0); return; }                    // the voltage shows through
+    alpha = u_ualpha;
+  }
   if (u_overlay == 1) {
-    o = vec4(min(lut(u_lut, tOf(v)).rgb + lut(u_lut2, tOf(val.b)).rgb, 1.0), 1.0);
+    o = vec4(min(lut(u_lut, tOf(v)).rgb + lut(u_lut2, tOf(val.b)).rgb, 1.0), alpha);
     return;
   }
-  o = lut(u_lut, tOf(v));
+  o = vec4(lut(u_lut, tOf(v)).rgb, alpha);
 }`;
 
 function compile(vs, fs) {
@@ -397,8 +407,10 @@ function compile(vs, fs) {
 
 function initGL() {
   cvs = document.getElementById("gl");
+  // alpha: where raw voltage is drawn on the canvas underneath (raw_underlay.js), cells
+  // without spikes are transparent; everywhere else the output is opaque
   gl = cvs.getContext("webgl2", { antialias: false, preserveDrawingBuffer: true,
-                                  premultipliedAlpha: false, alpha: false });
+                                  premultipliedAlpha: false, alpha: true });
   if (!gl) throw new Error("WebGL2 is not available in this browser");
   if (!gl.getExtension("EXT_color_buffer_float"))
     throw new Error("EXT_color_buffer_float is not available");
@@ -770,10 +782,13 @@ function computeValues(v, W, H, norm, eps, method = COUNT_MODE, L = lay(), spike
            spikesInWindow: c.i1 - c.i0 };
 }
 
-function drawColormapped(W, H, s) {
+function drawColormapped(W, H, s, under = null) {
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   gl.viewport(0, 0, W, H);
+  gl.disable(gl.BLEND);
   const C = prog.cmap; gl.useProgram(C.p);
+  gl.uniform4fv(C.u.u_under, under ? under.rect : [0, 0, 0, 0]);
+  gl.uniform1f(C.u.u_ualpha, under ? under.alpha : -1);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, res.vals.tex);
   gl.uniform1i(C.u.u_val, 0);
   const over = state.spikes === "overlay";
@@ -907,7 +922,7 @@ function render() {
   const v = viewGrid(), s = state[state.mode];
   const t = performance.now();
   const r = computeValues(v, layout.W, layout.H, state.mode === "norm", state.eps);
-  drawColormapped(layout.W, layout.H, s);
+  drawColormapped(layout.W, layout.H, s, RawUnderlay.draw());
   lastDraw = { ...r, ms: performance.now() - t };
   if (pinned && pinned.key !== viewKey()) pinned = null;   // a pin lasts until the view changes
   drawOverlay();
@@ -955,6 +970,8 @@ function drawOverlay() {
   ctx.fillStyle = ink2; ctx.textAlign = "right"; ctx.textBaseline = "middle";
   ctx.fillText("Population rate,", px - 8, OV_Y + 8);
   ctx.fillText("whole session", px - 8, OV_Y + 22);
+  RawUnderlay.drawLegend(ctx, ox, OV_Y, OV_H);
+  ctx.font = "12px Arial"; ctx.lineWidth = 1;
 
   // time axis
   const span = state.t1 - state.t0, step = niceStep(span, Math.max(2, pw / 110));
@@ -1085,7 +1102,7 @@ function updateStatus() {
     (state.spikes !== "all" && burst.flags ? `bursts: ${SETS.onset.n.toLocaleString("en-US")} ` +
       `(${(100 * SETS.burst.n / ticks.length).toFixed(1)}% of spikes) at ≥${burst.params.S} ms silence, ` +
       `ISI ≤${burst.params.M} ms, ≥${burst.params.K} spikes · ` : "") +
-    `counted by ${lastDraw.path} · ${lastDraw.ms.toFixed(1)} ms to submit`;
+    `counted by ${lastDraw.path} · ${lastDraw.ms.toFixed(1)} ms to submit` + RawUnderlay.status();
 }
 
 // ---------------------------------------------------------------- hover
@@ -1291,6 +1308,7 @@ function setupInteraction() {
     else if (k === "a" || k === "A") { state.n0 = 0; state.n1 = lay().Y; }
     else if (k === "Escape") { pinned = null; }
     else if (k === "s" || k === "S") { state.t0 = TS; state.t1 = TE; }
+    else if (!e.ctrlKey && !e.metaKey && RawUnderlay.key(k)) { /* raw voltage underlay: V, D, U, O, [, ] */ }
     else return;
     e.preventDefault(); clampView(); requestRender();
   });
@@ -1379,11 +1397,13 @@ function scheduleHash() {
       n0: state.n0.toFixed(3), n1: state.n1.toFixed(3), ymode: state.ymode, spikes: state.spikes,
       bS: state.burst.S, bM: state.burst.M, bK: state.burst.K, mode: state.mode, eps: state.eps,
       block: state.block, vmin: s.vmin, vmax: s.vmax, cmap: s.cmap });
+    RawUnderlay.toHash(p);
     history.replaceState(null, "", location.pathname + location.search + "#" + p);
   }, 300);
 }
 function readHash() {
   const p = new URLSearchParams(location.hash.slice(1));
+  RawUnderlay.fromHash(p);
   if (Object.hasOwn(LAY, p.get("ymode") || "")) { state.ymode = p.get("ymode"); state.n0 = 0; state.n1 = lay().Y; }
   if (Object.hasOwn(SPIKE_MODES, p.get("spikes") || "")) state.spikes = p.get("spikes");
   for (const [k, lo, hi] of [["S", 0, 10000], ["M", 0.1, 1000], ["K", 2, 16]]) {
@@ -1515,6 +1535,16 @@ async function runTests() {
     }
     document.getElementById("loading").style.display = "none";
     render();
+    if (new URLSearchParams(location.search).has("rawtest")) {
+      const r = window.__rawTest = await RawUnderlay.test();
+      console.log("raw underlay self-test", r);
+      document.getElementById("status").textContent = r.error ? "Raw self-test: " + r.error :
+        `Raw self-test ${r.ok ? "passed" : "FAILED"}: ${r.decode.filter((q) => q.ok).length} of ${r.decode.length} ` +
+        `chunks decode to the stored sum; processing differs from Python by at most ` +
+        `${Math.max(...r.process.map((q) => q.maxAbsDiff_uV)).toExponential(1)} µV ` +
+        `(${Math.max(...r.process.map((q) => q.ms)).toFixed(0)} ms per tile); details in window.__rawTest`;
+      return;
+    }
     if (new URLSearchParams(location.search).has("test")) {
       document.getElementById("status").textContent = "Running self-test";
       const r = await runTests();

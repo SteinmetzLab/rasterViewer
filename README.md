@@ -274,6 +274,7 @@ present, and the packed ones otherwise.
 | `reference.py`, `make_refs.py` | Reference implementation and test-case writer |
 | `rastermap/` | How the Rastermap order was computed and checked (its own README) |
 | `bursts/` | The burst definition: detector, diagnostic figures, and literature notes (its own README) |
+| `raw_underlay.js`, `raw_worker.js`, `raw_underlay/` | Prototype: the recorded voltage drawn under the spikes at deep zoom, from raw data served locally (`python serve.py --raw <folder>`; its own README). Inactive without that data, so inactive on the public site |
 | `plan/` | The original design plan, example stills and the script that made them (paths there point to the Windows desktop) |
 | `.nojekyll` | Tells GitHub Pages to serve the files as they are |
 

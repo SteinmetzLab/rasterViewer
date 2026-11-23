@@ -26,6 +26,8 @@
   #stage { position: absolute; left: 0; right: 0; top: 44px; bottom: 26px; }
   #gl { position: absolute; image-rendering: pixelated; image-rendering: crisp-edges;
     cursor: crosshair; }
+  #rawcv { position: absolute; display: none; image-rendering: pixelated;
+    image-rendering: crisp-edges; pointer-events: none; }
   #overlay { position: absolute; left: 0; top: 0; pointer-events: none; }
   #status { position: absolute; left: 0; right: 0; bottom: 0; height: 26px; padding: 5px 12px;
     background: var(--panel); border-top: 1px solid var(--line); color: var(--ink2);
@@ -93,6 +95,7 @@
   <button id="helpBtn">Help</button>
 </div>
 <div id="stage">
+  <canvas id="rawcv"></canvas>
   <canvas id="gl"></canvas>
   <canvas id="overlay"></canvas>
   <div id="box"></div>
@@ -109,7 +112,12 @@
   <b>Zoom to a probe or shank:</b> click its label (or its color band) on the left.<br>
   <b>Readout:</b> click a cell to show its values (until the view changes; Esc clears), or
   hold Alt (Option on a Mac) to have it follow the pointer.<br>
-  <b>Keys:</b> R reset, A all neurons, S whole session, + / − zoom time.<br><br>
+  <b>Keys:</b> R reset, A all neurons, S whole session, + / − zoom time.<br>
+  <b>Raw voltage</b> (only where the raw data are served, marked in yellow under the overview
+  strip): with neurons plotted by depth and a window of 0.5 s or less, the recorded voltage is
+  drawn under the spikes. V switches between the stored versions (lossless and lossy), D shows
+  the difference from lossless, [ and ] set the gray range, O the opacity of the spikes, U hides
+  it.<br><br>
   Each displayed cell is the mean firing rate over every neuron and instant it covers.
   <b>Neurons</b> sets the vertical axis: sorted by depth (probe, shank, then position along
   the shank, shallow at top, one row per neuron); plotted by depth (each shank to scale, each
@@ -125,6 +133,7 @@
   The view is saved in the URL, so it can be bookmarked.
 </div>
 <div id="loading"><div id="loadMsg">Loading spikes</div></div>
+<script src="raw_underlay.js"></script>
 <script src="viewer.js"></script>
 </body>
 </html>

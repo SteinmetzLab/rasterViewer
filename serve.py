@@ -2,6 +2,11 @@
 
 Serves this folder: index.html, viewer.js, data/ (written by prep_data.py) and refs/
 (written by make_refs.py, for ?test=1). Works on Windows and macOS.
+
+    python serve.py --raw Y:/temp/fd016_raw_underlay
+
+also serves that folder (raw voltage for the underlay, written by
+raw_underlay/make_raw_proto.py) as rawdata/.
 """
 import argparse
 import functools
@@ -35,7 +40,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--raw", default=None, help="folder with raw voltage data, served as rawdata/")
     a = ap.parse_args()
+    if a.raw:
+        if not (Path(a.raw) / "manifest.json").exists():
+            raise SystemExit(f"no manifest.json in {a.raw}")
+        MOUNTS["/rawdata/"] = Path(a.raw)
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", a.port),
                                           functools.partial(Handler, directory=str(HERE)))
     print(f"Serving http://localhost:{a.port}/  (Ctrl+C to stop)")
