@@ -94,16 +94,17 @@ disk is what a browser would download.
 - Reading of the `.cbin` files: every site with zero variance in the decoded data is on the
   sorter's list of dead sites (shanks 0 to 2: the lists are equal; shank 3: the sorter lists one
   more site, 153, which is not flat in this stretch).
-- `validate_alignment.py`, shank 0, 145 units with a spike-triggered average of 30 µV or more
-  (results in `validate_alignment_sh0.json` next to the data):
-  - Time: the trough of the average is 0 or 1 sample before the mapped spike time for 128
-    units, within 2 samples for 94%. With a straight-line clock in place of the pairs, the
-    averages shrink to 54% of their amplitude (median), i.e. the sync wobble is real and the
-    pairs remove it.
+- `validate_alignment.py`, all four shanks, 460 units with a spike-triggered average of 30 µV
+  or more (results in `validate_alignment_sh<k>.json` next to the data):
+  - Time: the trough of the average is 0 or 1 sample before the mapped spike time for 82% of
+    units and within 2 samples for 90% (by shank: 94, 88, 88, 92%). With a straight-line clock
+    in place of the pairs, the averages shrink to 54% of their amplitude (median), i.e. the
+    sync wobble is real and the pairs remove it.
   - Depth: the site with the largest trough is within 15 µm of the unit's depth in the viewer
-    for 86% of units (median distance 2 µm). For most of the rest, the largest trough within
-    150 µm belongs to a bigger waveform 60 to 150 µm away that occurs at the same time; see
-    "Known limits".
+    for 84% of units (median distance about 2 µm; by shank: 86, 86, 79, 88%). For 37 units (8%)
+    the largest trough within 150 µm is 60 µm or more away. On shank 0, where these were looked
+    at, the units' own template peaks agree with their viewer depth, and the larger trough
+    belongs to a bigger waveform that occurs at the same time; see "Known limits".
 
 ## Known limits
 
