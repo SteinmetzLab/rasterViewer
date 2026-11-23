@@ -54,7 +54,7 @@ Controls in the top bar:
     along the shank, shallow at top.
   - *Plotted by depth (to scale)*: each shank is drawn to scale in micrometers, and each neuron
     is a 15 µm band (the NP2.0 site pitch) centered on its position, shallow at top. Neurons at
-    similar depths overlap and are averaged; stretches with no neuron are dark gray. Every
+    similar depths overlap and are averaged; stretches with no neuron are drawn as a rate of zero. Every
     shank spans the same full recorded range (sites at 0 to 2865 µm above the deepest site,
     NP2.0 bank 0), so all shanks are drawn identically; depth below the brain surface still
     needs histology.
@@ -111,8 +111,9 @@ Controls in the top bar:
   (its session mean rate + ε).
 - **Shortest window**: W samples, so every column holds at least one sample. That is about
   47 ms at 1400 cells across; a larger Cell size allows shorter windows.
-- A cell with no spikes gets the bottom color of the map. A cell with no neuron (only when
-  plotted by depth) is dark gray, and a column with no 30 kHz sample is mid gray.
+- A cell with no spikes gets the bottom color of the map. So does a cell with no neuron (only
+  when plotted by depth); the readout under the cursor says which it is. A column with no
+  30 kHz sample is mid gray.
 
 ## How it works
 

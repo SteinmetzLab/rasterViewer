@@ -365,7 +365,9 @@ vec4 lut(sampler2D s, float t) { return texelFetch(s, ivec2(int(t * 255.0 + 0.5)
 void main() {
   vec4 val = texelFetch(u_val, ivec2(gl_FragCoord.xy), 0);
   float v = val.r;
-  if (v < -1.5) { o = vec4(0.11, 0.12, 0.13, 1.0); return; }   // no neurons here (depth)
+  // No neuron at this depth (-2): drawn as a rate of zero, like any cell without spikes.
+  // The value stays -2, so the readout and ?test=1 still tell the two cases apart.
+  if (v < -1.5) v = 0.0;
   if (v < 0.0) { o = vec4(0.25, 0.25, 0.25, 1.0); return; }    // column holds no samples
   if (u_overlay == 1) {
     o = vec4(min(lut(u_lut, tOf(v)).rgb + lut(u_lut2, tOf(val.b)).rgb, 1.0), 1.0);
