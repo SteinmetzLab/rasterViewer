@@ -20,7 +20,8 @@ spikes in the stretch:
          windows, constant beyond the outer ones). Three candidates for y_unit are compared:
          y_raw - d (the viewer's rule: a site at y is drawn at y - d), y_raw, and y_raw + d.
 
-Writes validate_raw_p<probe>_sh<shank>.json next to the raw data and prints a summary.
+Writes checks/validate_raw_p<probe>_sh<shank>_t<t0>-<t1>.json next to the raw data and prints a
+summary. compare_stretches.py then compares the same units between two stretches.
 """
 import argparse
 import json
@@ -139,7 +140,9 @@ def main():
                                              "y_raw + d": stat((e0 + d)[moved])}
         # slope of (y_raw - y_unit) against d over all units: +1 if the rule is right, 0 if no shift is needed
         summ["slope_of_offset_on_motion"] = float(np.polyfit(d, e0, 1)[0])
-    json.dump(dict(summary=summ, units=out), open(raw / f"validate_raw_p{a.probe}_sh{a.shank}.json", "w"), indent=1)
+    name = f"validate_raw_p{a.probe}_sh{a.shank}_t{a.t0:.0f}-{a.t1:.0f}.json"
+    (raw / "checks").mkdir(exist_ok=True)
+    json.dump(dict(summary=summ, units=out), open(raw / "checks" / name, "w"), indent=1)
     print(json.dumps(summ, indent=1))
 
 

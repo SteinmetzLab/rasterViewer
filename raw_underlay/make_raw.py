@@ -30,7 +30,13 @@ with size, MD5 and the sum of the stored values) and, with --keys, uploads each 
 `refs` writes reference output of the display processing for a few tiles (test/), which the
 viewer's ?rawtest=1 compares with its own JavaScript, and records one chunk sum per shank.
 `sync` compares the bucket with the progress files (key, size, MD5) and uploads what is
-missing or different, and the small files.
+missing or different, and the small files. It exits with an error while any tile of the
+manifest's range has not been converted.
+
+Run every step with the same Python: the compressed bytes (and so the MD5s) depend on the zlib
+build, although they decode to the same samples. Do not run two `convert` at once on the same
+shank. A stored tile must never change under the same PREFIX, because browsers are told to
+keep tiles for a year.
 
 KEYS.json: {"account_id", "access_key_id", "secret_access_key", "bucket"} for Cloudflare R2
 (S3 API). It is a secret and is not part of this repository.
@@ -152,6 +158,9 @@ def do_meta(a):
         checks.append(chk)
         print(json.dumps(chk))
         assert chk["spike_err_max_samples"] < 0.05, "the knots do not reproduce the spike times"
+        assert chk["left_right_max_samples"] is not None and chk["left_right_max_samples"] < 0.05, \
+            "the lines on the two sides of a sync edge do not meet"
+        assert chk["edges_dropped"] <= 10, "many sync edges without spikes next to them"
         np.stack([ks, kt], axis=1).astype("<f8").tofile(out / f"clock_p{p}.f64")
         shanks = [shank_info(a.session, p, sh) for sh in range(4)]
         n = shanks[0]["n_samples"]
@@ -318,7 +327,11 @@ def do_convert(a):
                     continue
                 t_sh = time.time()
                 b_sh = 0
-                with open(out / "progress" / f"p{p}_sh{sh}.jsonl", "a") as log:
+                pf = out / "progress" / f"p{p}_sh{sh}.jsonl"
+                cut = pf.exists() and pf.stat().st_size > 0 and not pf.read_bytes().endswith(b"\n")
+                with open(pf, "a") as log:
+                    if cut:                                  # a line cut short by a crash
+                        log.write("\n")
                     for k, (_, _, c, res) in enumerate(pool.imap_unordered(_chunk, tasks)):
                         for r in res:
                             log.write(json.dumps(r) + "\n")
@@ -380,20 +393,30 @@ def do_sync(a):
         for o in page.get("Contents", []):
             have[o["Key"]] = (o["Size"], o["ETag"].strip('"'))
     print(f"{len(have)} objects in the bucket under {PREFIX}")
-    want, expected = [], set()
+    want, expected, absent = [], set(), 0
     for pr in man["probes"]:
         for s in pr["shanks"]:
             rel = f"p{pr['probe']}/sh{s['shank']}"
-            for T, r in read_progress(out, pr["probe"], s["shank"]).items():
+            done = read_progress(out, pr["probe"], s["shank"])
+            miss = [T for T in range(pr["tile_first"], pr["tile_last"] + 1) if T not in done]
+            if miss:
+                absent += len(miss)
+                print(f"  probe {pr['probe']} shank {s['shank']}: {len(miss)} tiles not converted yet "
+                      f"(first {miss[0]}, last {miss[-1]})")
+            for T, r in done.items():
                 key = f"{PREFIX}{rel}/0.{T}"
                 expected.add(key)
                 if have.get(key) != (r["n"], r["md5"]):
                     want.append((key, out / rel / f"0.{T}", r["md5"]))
-    print(f"{len(expected)} tiles in the progress files, {len(want)} to upload")
+    print(f"{len(expected)} tiles in the progress files, {len(want)} to upload; "
+          f"{absent} tiles of the manifest's range are not converted yet")
 
     def up(item):
         key, path, md5 = item
-        buf = path.read_bytes()
+        try:
+            buf = path.read_bytes()
+        except OSError as e:
+            return f"{path}: {e}"
         if hashlib.md5(buf).hexdigest() != md5:
             return f"{path}: file does not match the progress file"
         s3.put_object(Bucket=bucket, Key=key, Body=buf, ContentType="application/octet-stream",
@@ -414,7 +437,7 @@ def do_sync(a):
     stray = sorted(set(have) - expected)
     print(f"uploaded {len(want) - len(bad)} tiles ({len(bad)} problems) and {len(small)} small files; "
           f"{len(stray)} objects in the bucket are not expected{': ' + ', '.join(stray[:5]) if stray else ''}")
-    return len(bad)
+    return len(bad) + absent                  # nonzero: the bucket does not hold the whole range yet
 
 
 if __name__ == "__main__":

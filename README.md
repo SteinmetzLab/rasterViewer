@@ -41,7 +41,9 @@ battery.
 | Box zoom | Ctrl + drag, Cmd + drag on a Mac, or right-drag |
 | Jump in time | Click or drag in the population-rate strip at the top |
 | Zoom to a probe or shank | Click its label (or its color band) on the neuron axis |
-| Reset / all neurons / whole session | Buttons, or keys R / A / S; + and − zoom time |
+| Reset / all neurons / whole session | Buttons, or keys R / A / W; + and − zoom time |
+| Sonify (play the view as sound) | The Sonify button, or S or the space bar; see "Sonify" below |
+| Raw voltage under the spikes | Neurons plotted by depth, 0.5 s or less, a few shanks; see "Raw voltage" below |
 | Readout | Off by default. Click a cell to show it (it stays until the view changes; Esc clears it), or hold Alt (Option on a Mac) to have it follow the pointer. It gives the time, the neuron under the pointer (cluster id, probe, shank, position along the shank, session rate), and the cell's spike count, neuron count, duration and value |
 
 Controls in the top bar:
@@ -88,6 +90,78 @@ Controls in the top bar:
   cells average over more neurons and time, and individual spikes become bigger blocks.
 - **Color range** (log scale) and **Map**.
 - The view is kept in the URL (`#t0=...&t1=...`), so a view can be bookmarked.
+
+## Sonify
+
+**Sonify** (the button, S, or the space bar) plays the view as sound. A line is drawn at the
+middle time of the view, the raster scrolls left under it, and what crosses the line is played.
+Press again to stop. Everything can be changed while it plays: pan, zoom, the neuron ordering,
+the spike selection, the color range. Panning or zooming in time continues from the middle of
+the new view.
+
+- **Speed.** The raster always moves at the same speed on the screen: one plot width in 30 s
+  (the *Crossing* setting: 10, 20, 30 or 60 s). The playback rate therefore follows the zoom:
+  the whole 40 min session in view plays at 81 times real time, a 3 s window at 1/10 of real
+  time. The status bar shows the rate.
+- **Pitch.** The vertical axis of the current view maps to pitch, high at the top, over 4
+  octaves centered on A4 (*Range*: 2 to 5). This holds for every neuron ordering and any
+  vertical zoom. Each cell row sounds the nearest note of the chosen *Key* and *Scale* (major
+  or minor pentatonic, major, natural minor, whole tone, 12-tone), or, with *No rounding*, one
+  of up to 64 equal pitch bands. When neurons are taller than a cell, all of a neuron's cells
+  sound the single note of the neuron's middle, so a neuron is one note.
+- **Loudness follows color.** With t a cell's position on the color scale (0 at the bottom of
+  the color range, 1 at the top), its level is 36 dB x (1 - t) below full, and silent at t = 0
+  (no spikes, or a rate at or below the bottom of the color range). A note's level is the RMS
+  of the levels of its cells. So the color range sets what is audible, and bright is loud.
+- **Single spikes and firing rates are one mechanism.** Each note is an oscillator whose
+  loudness follows the note's level with a fast attack and a slower release (the *Sound*
+  setting: marimba, harp, organ, pure tone). Zoomed in, a spike is one bright cell: the level
+  jumps for one column and falls back, which is a struck note that rings out. Zoomed out, the
+  level changes a little from column to column: a sustained tone whose loudness follows the
+  firing rate. In between, spikes that arrive faster than the release fuse into a tremolo.
+- **What you hear is what you see.** The sound is computed from the cell values as drawn, one
+  column at a time; the view advances by whole columns so a column holds the same spikes on
+  every frame. Timing is therefore quantized to one column: 1/W of the crossing time, about 40
+  ms of playing time for a 740-column plot at 30 s (finer with a wider plot or Cell = 1).
+- Where the view cannot scroll (the window touches the start or the end of the session) the
+  view stays and the line moves instead. Started with the window at the session start, the
+  line starts at the left edge, so the beginning is not skipped.
+- The settings are kept in the URL. Playing stops when the tab is hidden.
+
+## Raw voltage
+
+With **Neurons** set to *Plotted by depth*, a window of 0.5 s or less and a few shanks in view
+(up to 12 at 0.2 s or less, 6 at 0.5 s), the recorded voltage of every site is drawn in gray
+under the spikes, for all 7 probes and the whole session. When a view is close, the status line
+says what to zoom. Clicking a shank's label and zooming time in is the quickest way there.
+
+| Key | Does |
+|---|---|
+| [ and ] | halve / double the gray range (starts at black −100 µV, white +100 µV) |
+| O | spike marks at 100%, 60%, 0% opacity |
+| M | motion shift off / on |
+| U | hide / show the voltage |
+
+- **What is drawn**: per site, the voltage high-pass filtered at 300 Hz, minus the median over
+  the shank at each sample. Each screen pixel shows the sample of largest magnitude among the
+  samples and sites it covers. The two sites of a 15 µm row share that row's band (left site
+  upper half, right site lower half).
+- **Alignment with the spikes**: time goes through the same piecewise-linear clock map that
+  put each probe's spikes on the rig's clock, so a spike mark sits on its waveform to about
+  one sample. Depth is shifted by the sorter's motion estimate, because the sort ran on
+  motion-corrected data and a unit's depth is in those coordinates.
+- **The data** are the recorded samples with the 2 lowest bits dropped (steps of 12 µV, which
+  adds about 3% to a site's noise), SIZE_SHORT_PLACEHOLDER in a public Cloudflare R2 bucket. They
+  are downloaded as needed, about 1.2 MB per shank for every 0.2 s, and kept by the browser's
+  cache. The bucket lets pages on `www.steinmetzlab.net` and `localhost:8765` / `8771` read it.
+- **Only QC-passing units are marked**, which is 49% of the spikes Kilosort assigned, so clear
+  waveforms without a mark are common.
+- `?rawbase=off` switches the underlay off; `python serve.py --raw <folder>` uses a local copy
+  of the data.
+
+Format, conversion, and the checks (stored samples against the lab's files, the clock map
+against all 61 M spikes, spikes on their waveforms, the motion shift) are in
+[`raw_underlay/README.md`](raw_underlay/README.md).
 
 ## What each cell shows (exact definition)
 
@@ -243,6 +317,34 @@ about 10 ms. Before search, panning the whole session ran at about 6 frames/s on
   could not be shown, the colorbar was off by one color-table step, the raster could shift by a
   pixel at fractional display scaling, and "depth" was a misleading label.
 
+- **Raw voltage**: `?rawtest=1` checks, against the hosted data, that the clock and motion
+  files of all 7 probes load, that one chunk of each of the 28 shanks decodes to the stored
+  sum, that the display processing of three tiles equals the Python reference bit for bit,
+  and that the drawing of four views equals the rule recomputed pixel by pixel (0.06% of
+  pixels differ at most, at sample and site boundaries). The checks of the data themselves
+  are listed in `raw_underlay/README.md`.
+- **Sonify**: `?sonifytest=1` runs 36 checks in the browser:
+  - the notes of four scales against hand-written lists;
+  - rows to notes for every ordering (highest note at the top, never rising downward, one note
+    per neuron when zoomed in, and for "plotted by depth" against a brute-force search);
+  - the transport (which column sounds when, and where the view and the line are) run on a
+    simulated clock for six cases, including the session start, the session end, the whole
+    session in view and stalled frames: every column is scheduled exactly once, before it
+    sounds, from inside the view, and the line is over the column being heard;
+  - the synthesis rendered offline with known levels (amplitude within 2% of level, attack and
+    release times, silence before a note's column, no leakage between notes, frequencies);
+  - for six real views, the note levels the player reads back from the picture against levels
+    computed from the float64 readout (`cellCPU`) with separate code (largest difference 6e-8).
+
+  Live runs in Chrome, recording the output with an analyser: the playback rate equals the
+  window divided by the crossing time; the sound of 10 isolated spikes rose 4 to 18 ms after
+  the time scheduled for their column (the measurement resolves one 17 ms frame); the
+  whole-session view sounds throughout; over 123 scroll steps a column's cell values did not
+  change. An independent review found that the first version went silent whenever the view
+  stood still (the whole-session view among them), which the self-test then could not see; the
+  scheduling now runs every frame and the transport checks above were added. Not checked by
+  ear by the author of the code. Only Chrome on Windows was run; Safari and Firefox are untested.
+
 ## Data files
 
 `data/` holds everything the viewer loads:
@@ -266,6 +368,7 @@ present, and the packed ones otherwise.
 | File | Role |
 |---|---|
 | `index.html`, `viewer.js` | The viewer (no external libraries) |
+| `sonify.js` | Plays the view as sound (Web Audio API); `?sonifytest=1` |
 | `serve.py` | Local server for this folder (Windows or macOS) |
 | `prep_data.py` | ALF + movie export to raw `ticks.u32`, `rows.u16`, and `meta.json` |
 | `pack_data.py` | Packs the raw spike files for the web; `load_spikes()` reads either form |
@@ -274,7 +377,8 @@ present, and the packed ones otherwise.
 | `reference.py`, `make_refs.py` | Reference implementation and test-case writer |
 | `rastermap/` | How the Rastermap order was computed and checked (its own README) |
 | `bursts/` | The burst definition: detector, diagnostic figures, and literature notes (its own README) |
-| `raw_underlay.js`, `raw_worker.js`, `raw_underlay/` | Prototype: the recorded voltage drawn under the spikes at deep zoom, from raw data served locally (`python serve.py --raw <folder>`; its own README). Inactive without that data, so inactive on the public site |
+| `raw_underlay.js`, `raw_worker.js` | The recorded voltage drawn under the spikes at deep zoom, from data hosted in a bucket |
+| `raw_underlay/` | How the hosted raw data were made and checked (its own README) |
 | `plan/` | The original design plan, example stills and the script that made them (paths there point to the Windows desktop) |
 | `.nojekyll` | Tells GitHub Pages to serve the files as they are |
 
@@ -284,10 +388,14 @@ present, and the packed ones otherwise.
   ordinary memory. Fine on the TITAN V and the M3 Max; a laptop with a small integrated GPU
   may fail to start or fall back to the slower counting method. Keeping only the search
   method would roughly halve the GPU memory.
-- The online copy is public: anyone with the address can view and download the data.
+- The online copy is public: anyone with the address can view and download the data, and
+  that now includes the raw voltage (in the bucket, at reduced resolution).
+- The bucket's `r2.dev` address is rate-limited by Cloudflare and meant for development. If
+  tiles start failing to load with several people viewing, the bucket needs a custom domain.
 - Each visit downloads 115 MB (the browser may cache it). GitHub Pages has a soft limit of
   100 GB of traffic a month, about 850 visits.
 - Not yet tried on Windows: the Alt-key readout (releasing Alt alone can focus the browser's
   menu on Windows; the viewer blocks the default action but this is untested), the search
   counting method, and the three vertical layouts. Run `?test=1` there once.
-- Future ideas noted: behavior event markers; sonification. (Rastermap order is now a mode.)
+- Future ideas noted: behavior event markers; a toggle for the spikes of units that failed
+  QC, which would need the spikes themselves to be fetched by region and not all at once.

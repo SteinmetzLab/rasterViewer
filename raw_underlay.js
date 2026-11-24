@@ -480,12 +480,98 @@ void main() {
       out.process.push({ probe: tt.probe, shank: tt.shank, tile: tt.tile, n: ref.length,
                          sameLength: ref.length === d.data.length, maxAbsDiff_uV: maxAbs, maxRef_uV: maxRef, ms: d.ms });
     }
+    out.draw = await testViews();
     out.ok = out.probes.every((q) => q.ok) && out.decode.every((q) => q.ok) && out.process.length > 0 &&
-      out.process.every((q) => q.sameLength && q.maxAbsDiff_uV < 0.01);
+      out.process.every((q) => q.sameLength && q.maxAbsDiff_uV < 0.01) &&
+      out.draw.every((q) => !q.error && q.fracDiffer < 0.005 && q.drawn > 0.5 * q.pixels);
     return out;
   }
 
-  return { load, draw, key, drawLegend, status, toHash, fromHash, test,
+  // The drawing of the current view, checked against the rule computed here in double
+  // precision: every device pixel of the raw canvas (see the head of this file for the rule;
+  // a pixel column belongs to the tile that holds its central sample). The GPU works in single
+  // precision and keeps the voltage as half floats, so a gray level may differ by 1, and a few
+  // pixels whose edge falls on a sample or site boundary may differ by more.
+  async function checkDraw() {
+    render();
+    if (!info.active || info.loading || info.failed) return { error: "the view is not drawn completely" };
+    const b = state.block, PW = layout.W * b, PH = layout.H * b, tile = man.tile;
+    const px = new Uint8Array(PW * PH * 4);
+    render();                                           // draw and read in the same task
+    g.readPixels(0, 0, PW, PH, g.RGBA, g.UNSIGNED_BYTE, px);
+    const span = state.t1 - state.t0, nspan = state.n1 - state.n0;
+    const ymax = (man.n_channels / 2 - 1) * man.row_pitch_um;
+    let pixels = 0, drawn = 0, differ = 0, maxDiff = 0;
+    for (const sg of LAY.depth.segs) {
+      if (!(sg.y1 > state.n0 && sg.y0 < state.n1)) continue;
+      const q = probes.get(sg.probe), pr = man.probes[sg.probe], mo = pr.motion, nd = mo.depths_um.length;
+      const sE = new Float64Array(PW + 1);
+      for (let x = 0; x <= PW; x++) sE[x] = interp(q.t, q.s, state.t0 + span * x / PW);
+      const data = new Map();
+      for (let T = Math.floor(sE[0] / tile) - 1; T <= Math.floor(sE[PW] / tile) + 1; T++)
+        if (T >= pr.tile_first && T <= pr.tile_last) data.set(T, (await tileData(sg.probe, sg.shank, T)).data);
+      const off = sg.y0 + (sg.top10 - 75) / 10 - ymax, drho = nspan / PH / 7.5;
+      for (let p = 0; p < PH; p++) {
+        const nc = state.n0 + (p + 0.5) * nspan / PH;
+        if (!(nc >= sg.y0 && nc < sg.y1)) continue;
+        const ra0 = (state.n0 + p * nspan / PH - off) / 7.5;
+        const yc = ymax + 7.5 - (ra0 + 0.5 * drho) * 7.5;
+        const u = Math.min(nd - 1, Math.max(0, (yc - mo.depths_um[0]) / (mo.depths_um[1] - mo.depths_um[0])));
+        const k = Math.min(Math.floor(u), nd - 2);
+        for (let x = 0; x < PW; x++) {
+          const T = Math.floor((0.5 * (sE[x] + sE[x + 1]) + 0.5) / tile), d = data.get(T);
+          let want = 128;                               // nothing drawn: the canvas's mid gray
+          if (d) {
+            const m = motionOf(q, sg.shank, T), shift = R.motion ? m[k] + (m[k + 1] - m[k]) * (u - k) : 0;
+            const ra = ra0 - shift / 7.5;
+            const r0 = Math.max(0, Math.floor(ra)), r1 = Math.min(384, Math.ceil(ra + drho), r0 + 24);
+            const i0 = Math.max(0, Math.floor(sE[x] - T * tile + 0.5));
+            const i1 = Math.min(tile, Math.ceil(sE[x + 1] - T * tile + 0.5), i0 + 64);
+            if (i1 > i0 && r1 > r0) {
+              let best = 0;
+              for (let r = r0; r < r1; r++) {
+                const c = (191 - (r >> 1)) * 2 + (r & 1);
+                for (let i = i0; i < i1; i++) { const v = d[c * tile + i]; if (Math.abs(v) > Math.abs(best)) best = v; }
+              }
+              want = Math.round(255 * Math.min(1, Math.max(0, 0.5 + 0.5 * best / R.uv)));
+              drawn++;
+            }
+          }
+          const got = px[((PH - 1 - p) * PW + x) * 4], e = Math.abs(got - want);
+          pixels++;
+          if (e > 1) { differ++; maxDiff = Math.max(maxDiff, e); }
+        }
+      }
+    }
+    return { pixels, drawn, differ, fracDiffer: differ / Math.max(1, pixels), maxDiff };
+  }
+  // checkDraw on a few views: one shank; a shank that had moved by tens of micrometers; four
+  // shanks across a tile edge and across a change of the motion estimate (a whole second of
+  // probe time). Times are found on the probe's clock.
+  async function testViews() {
+    const seg = (p, sh) => LAY.depth.segs.find((q) => q.probe === p && q.shank === sh);
+    const timeAt = (p, smp) => { const q = probes.get(p); return interp(q.s, q.t, smp); };
+    const views = [
+      { name: "one shank, 33 ms", t0: 1125.037, t1: 1125.070, n0: seg(0, 0).y0 + 520, n1: seg(0, 0).y0 + 920 },
+      { name: "moved shank, 80 ms", t0: 273.50, t1: 273.58, n0: seg(1, 0).y1 - 420, n1: seg(1, 0).y1 },
+      { name: "four shanks across a second", t0: timeAt(4, 1749 * 30000) - 0.15, t1: timeAt(4, 1749 * 30000) + 0.15,
+        n0: seg(4, 0).y0, n1: seg(4, 3).y1 },
+      { name: "motion shift off", t0: 273.50, t1: 273.58, n0: seg(1, 0).y1 - 420, n1: seg(1, 0).y1, motion: false },
+    ];
+    const out = [], keep = { ...R };
+    for (const v of views) {
+      Object.assign(R, DEF, { motion: v.motion !== false });
+      state.ymode = "depth"; state.t0 = v.t0; state.t1 = v.t1; state.n0 = v.n0; state.n1 = v.n1;
+      render();
+      for (let i = 0; i < 600 && (!info.active || info.loading); i++) { await new Promise((r) => setTimeout(r, 100)); render(); }
+      out.push({ view: v.name, ...(await checkDraw()) });
+    }
+    Object.assign(R, keep);
+    render();
+    return out;
+  }
+
+  return { load, draw, key, drawLegend, status, toHash, fromHash, test, checkDraw,
            get available() { return !!man; }, get info() { return info; }, get settings() { return { ...R }; },
            get manifest() { return man; },
            // for checks: probe sample at a viewer time, and the motion estimate used for a tile
