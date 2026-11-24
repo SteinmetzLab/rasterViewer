@@ -65,7 +65,7 @@ def clock_pairs(session, probe):
     """(sample, time) for every sorted spike of the probe's QC units, sorted by sample.
 
     ALF holds each QC unit's spikes inside the synced period, in order; they are a contiguous
-    run of that unit's Kilosort spikes, found with a rough linear map and checked at both ends.
+    run of that unit's Kilosort spikes, found with a rough linear map and checked at every spike.
     """
     z = np.load(UNITS_NPZ, allow_pickle=True)
     uid = z["unit_ids"]
@@ -95,9 +95,12 @@ def clock_pairs(session, probe):
                 skipped += 1
                 continue
             g = s / FS * fit["slope"] + fit["offset"]         # rough time of each Kilosort spike
-            i0 = np.searchsorted(g, t[0] - 0.01)
+            i0 = np.searchsorted(g, t[0])                     # the Kilosort spike nearest to t[0]
+            i0 = min(max(i0 - 1, 0), g.size - 1) if i0 == g.size or (i0 > 0 and t[0] - g[i0 - 1] < g[i0] - t[0]) else i0
             ss = s[i0:i0 + t.size]
-            if ss.size != t.size or abs(g[i0] - t[0]) > 0.01 or abs(g[i0 + t.size - 1] - t[-1]) > 0.01:
+            # the rough map is within about 0.6 ms of the true one, so 2 ms at every spike
+            # rejects a run that is off by one spike or has a spike missing
+            if ss.size != t.size or np.abs(g[i0:i0 + t.size] - t).max() > 0.002:
                 skipped += 1
                 continue
             PS.append(ss)

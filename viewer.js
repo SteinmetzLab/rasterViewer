@@ -59,6 +59,7 @@ async function fetchBinary(url, label) {
 }
 
 async function load() {
+  const raw = RawUnderlay.load();        // optional: raw voltage (raw_underlay.js), found meanwhile
   meta = await (await fetch(DATA + "meta.json")).json();
   N = meta.n_rows; FS = meta.fs; TS = meta.t_start;
   const mr = await fetch(DATA + "manifest.json");
@@ -74,7 +75,7 @@ async function load() {
   if (rr.ok) rastermap = await rr.json();
   const ro = await fetch(DATA + "orderings.json");       // optional: further orderings of the neurons
   if (ro.ok) orderings = await ro.json();
-  await RawUnderlay.load();                              // optional: raw voltage (raw_underlay.js)
+  await raw;
 }
 
 // Spikes packed by pack_data.py: gzip streams split into parts. Decoded while downloading,
@@ -970,7 +971,7 @@ function drawOverlay() {
   ctx.fillStyle = ink2; ctx.textAlign = "right"; ctx.textBaseline = "middle";
   ctx.fillText("Population rate,", px - 8, OV_Y + 8);
   ctx.fillText("whole session", px - 8, OV_Y + 22);
-  RawUnderlay.drawLegend(ctx, ox, OV_Y, OV_H);
+  RawUnderlay.drawLegend(ctx);
   ctx.font = "12px Arial"; ctx.lineWidth = 1;
 
   // time axis
@@ -1308,7 +1309,7 @@ function setupInteraction() {
     else if (k === "a" || k === "A") { state.n0 = 0; state.n1 = lay().Y; }
     else if (k === "Escape") { pinned = null; }
     else if (k === "s" || k === "S") { state.t0 = TS; state.t1 = TE; }
-    else if (!e.ctrlKey && !e.metaKey && RawUnderlay.key(k)) { /* raw voltage underlay: V, D, U, O, [, ] */ }
+    else if (!e.ctrlKey && !e.metaKey && RawUnderlay.key(k)) { /* raw voltage underlay: U, O, M, [, ] */ }
     else return;
     e.preventDefault(); clampView(); requestRender();
   });
@@ -1539,8 +1540,10 @@ async function runTests() {
       const r = window.__rawTest = await RawUnderlay.test();
       console.log("raw underlay self-test", r);
       document.getElementById("status").textContent = r.error ? "Raw self-test: " + r.error :
-        `Raw self-test ${r.ok ? "passed" : "FAILED"}: ${r.decode.filter((q) => q.ok).length} of ${r.decode.length} ` +
-        `chunks decode to the stored sum; processing differs from Python by at most ` +
+        `Raw self-test ${r.ok ? "passed" : "FAILED"} (${r.base}): clock and motion of ` +
+        `${r.probes.filter((q) => q.ok).length} of ${r.probes.length} probes load; ` +
+        `${r.decode.filter((q) => q.ok).length} of ${r.decode.length} ` +
+        `chunks decode to the stored sum; processing of ${r.process.length} tiles differs from Python by at most ` +
         `${Math.max(...r.process.map((q) => q.maxAbsDiff_uV)).toExponential(1)} µV ` +
         `(${Math.max(...r.process.map((q) => q.ms)).toFixed(0)} ms per tile); details in window.__rawTest`;
       return;

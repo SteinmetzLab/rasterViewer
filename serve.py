@@ -3,10 +3,10 @@
 Serves this folder: index.html, viewer.js, data/ (written by prep_data.py) and refs/
 (written by make_refs.py, for ?test=1). Works on Windows and macOS.
 
-    python serve.py --raw Y:/temp/fd016_raw_underlay
+    python serve.py --raw Y:/temp/fd016_raw_v1
 
-also serves that folder (raw voltage for the underlay, written by
-raw_underlay/make_raw_proto.py) as rawdata/.
+also serves that folder (raw voltage for the underlay, written by raw_underlay/make_raw.py) as
+rawdata/, and the viewer then reads the raw voltage from there and not from the hosted copy.
 """
 import argparse
 import functools

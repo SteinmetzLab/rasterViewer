@@ -1,7 +1,7 @@
 "use strict";
-// Worker for the raw-voltage underlay (raw_underlay.js): downloads chunks of raw data, decodes
-// them and applies the display processing. raw_underlay/make_raw_proto.py holds the Python
-// reference of both steps (write_zarr, process_tile); ?rawtest=1 compares the two.
+// Worker for the raw-voltage underlay (raw_underlay.js): decodes chunks of raw data (downloaded
+// by the page) and applies the display processing. raw_underlay/ holds the Python reference of
+// both steps (make_raw.py decode_tile, make_raw_proto.py process_tile); ?rawtest=1 compares.
 //
 // A chunk is one file of a Zarr v2 array (channels x samples, int16, C order) stored with a
 // delta filter and zlib: inflate, then a running sum over the flattened array (int16 wraps).
@@ -9,15 +9,13 @@
 const chunks = new Map();          // url -> Promise<Int16Array>, most recently used last
 const MAX_CHUNKS = 16;
 
-function getChunk(url, nch, n) {
+function getChunk(url, buf, nch, n) {
   let p = chunks.get(url);
   if (p) { chunks.delete(url); chunks.set(url, p); return p; }
   p = (async () => {
-    const r = await fetch(url, { signal: AbortSignal.timeout(30000) });   // the data may sit on a network share
-    if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
-    const buf = await new Response(r.body.pipeThrough(new DecompressionStream("deflate"))).arrayBuffer();
-    if (buf.byteLength !== nch * n * 2) throw new Error(`${url}: ${buf.byteLength} bytes, expected ${nch * n * 2}`);
-    const a = new Int16Array(buf);
+    const out = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream("deflate"))).arrayBuffer();
+    if (out.byteLength !== nch * n * 2) throw new Error(`${url}: ${out.byteLength} bytes, expected ${nch * n * 2}`);
+    const a = new Int16Array(out);
     for (let i = 1; i < a.length; i++) a[i] += a[i - 1];
     return a;
   })();
@@ -113,12 +111,12 @@ onmessage = async (e) => {
   const m = e.data;
   try {
     if (m.type === "tile") {
-      const [prev, cur, next] = await Promise.all(m.urls.map((u) => u ? getChunk(u, m.p.nch, m.p.tile) : null));
+      const [prev, cur, next] = await Promise.all(m.urls.map((u, i) => u ? getChunk(u, m.bufs[i], m.p.nch, m.p.tile) : null));
       const t = performance.now();
       const data = processTile(prev, cur, next, m.p);
       postMessage({ id: m.id, ok: true, data, ms: performance.now() - t }, [data.buffer]);
     } else if (m.type === "sum") {       // checksum of a decoded chunk (for ?rawtest=1)
-      const a = await getChunk(m.url, m.nch, m.tile);
+      const a = await getChunk(m.url, m.buf, m.nch, m.tile);
       let s = 0;
       for (let i = 0; i < a.length; i++) s += a[i];
       postMessage({ id: m.id, ok: true, sum: s });
