@@ -40,7 +40,10 @@ This folder holds the code that made the hosted data and the checks on it. The v
 
 A view is eligible when (shanks in view) × (0.2 s tiles the window can touch) is at most 24:
 12 shanks at 0.2 s or less, 8 at 0.4 s, 6 at 0.5 s. Otherwise the status line says what to
-zoom.
+zoom. Each shank also needs the tile before and the tile after the view (for the filter's
+edges), so a view downloads up to shanks × (tiles + 2) files of about 1.2 MB. Six downloads
+run at a time, the most recently requested first; downloads and processing that the view no
+longer needs are given up when it moves on.
 
 ## The hosted data
 
@@ -73,8 +76,9 @@ a Zarr reader returns zeros outside.
   downloads. The `r2.dev` address is meant by Cloudflare for development: it is rate-limited
   (hundreds of requests per second) and not cached at their edge. Tiles are served with a
   one-year browser cache, so a tile must never change under `v1/`; a changed format goes
-  under a new prefix. The bucket only allows pages from `www.steinmetzlab.net`,
-  `steinmetzlab.net` and `localhost:8765` / `localhost:8771` to read it from a browser.
+  under a new prefix. The bucket only allows pages from `https://www.steinmetzlab.net`,
+  `https://steinmetzlab.net` and `http://localhost:8765` / `8771` to read it from a browser
+  (not the site's http address, so the page redirects that to https).
 
 ## Running the viewer on other copies of the data
 
@@ -107,12 +111,16 @@ this repository. The whole recording took TIME_PLACEHOLDER on one desktop (13 pr
 - **Browser against Python** (`?rawtest=1`, run against a local copy and against the
   bucket): clock and motion files of all 7 probes load; one chunk of each of the 28 shanks
   decodes to the stored sum; the display processing of three tiles equals the Python
-  reference (`process_tile`) to the last bit of the float32 values; and the drawing of four
+  reference (`process_tile`) to the last bit of the float32 values; and the drawing of five
   views (one shank; a shank that had moved by 52 µm; four shanks across a tile edge and a
-  change of the motion estimate; the shift switched off) is recomputed pixel by pixel in
-  double precision: 0.001% to 0.06% of 1.9 million pixels differ, where a pixel edge falls on
-  a sample or site boundary. The motion values and clock lookups the page uses were also
-  compared with the sorter's files directly.
+  change of the motion estimate; the shift switched off; two probes, each on its own clock)
+  is recomputed pixel by pixel in double precision: 0.001% to 0.06% of 1.9 million pixels
+  differ, where a pixel edge falls on a sample or site boundary. In the same views the spike
+  cells are opaque exactly where a cell holds spikes and transparent elsewhere, and the two
+  canvases cover the same rectangle. That recomputation uses the same formulas as the
+  drawing, written a second time, so it tests the GPU code and its inputs and not the rule;
+  the rule is tested by the spike-triggered averages below. The motion values and clock
+  lookups the page uses were also compared with the sorter's files directly.
 - **Spikes on their waveforms** (`validate_raw.py`, spike-triggered averages of the stored
   voltage at the viewer's spike times, units of 30 µV or more):
 

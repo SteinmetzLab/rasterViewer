@@ -1096,7 +1096,9 @@ function drawOverlay() {
   Sonify.drawHead(ctx);
 }
 
+let testNote = null;      // the result of a self-test (?test=1, ?rawtest=1, ?sonifytest=1): kept in the status line
 function updateStatus() {
+  if (testNote) { document.getElementById("status").textContent = testNote; return; }
   const { W, H, dpr } = layout, b = state.block;
   const dt = (state.t1 - state.t0) / W, dn = (state.n1 - state.n0) / H;
   const nsp = lastDraw.i1 - lastDraw.i0;
@@ -1560,7 +1562,7 @@ async function runTests() {
     if (new URLSearchParams(location.search).has("rawtest")) {
       const r = window.__rawTest = await RawUnderlay.test();
       console.log("raw underlay self-test", r);
-      document.getElementById("status").textContent = r.error ? "Raw self-test: " + r.error :
+      document.getElementById("status").textContent = testNote = r.error ? "Raw self-test: " + r.error :
         `Raw self-test ${r.ok ? "passed" : "FAILED"} (${r.base}): clock and motion of ` +
         `${r.probes.filter((q) => q.ok).length} of ${r.probes.length} probes load; ` +
         `${r.decode.filter((q) => q.ok).length} of ${r.decode.length} ` +
@@ -1573,7 +1575,7 @@ async function runTests() {
       document.getElementById("status").textContent = "Running the sonify self-test";
       const r = await Sonify.test();
       const bad = r.checks.filter((c) => !c.pass).map((c) => c.name);
-      document.getElementById("status").textContent = `Sonify self-test: ${r.passed} of ${r.total} checks passed` +
+      document.getElementById("status").textContent = testNote = `Sonify self-test: ${r.passed} of ${r.total} checks passed` +
         (bad.length ? `; FAILED: ${bad.join("; ")}` : "") + "; details in console / window.__sonifyTest";
       requestRender();
     } else if (new URLSearchParams(location.search).has("test")) {
@@ -1584,7 +1586,7 @@ async function runTests() {
       const cpuWorst = Math.max(...r.report.map((x) => x.skipped ? 0 : x.cpuMaxRel));
       const ms = Object.entries(r.fullViewMs)
         .map(([m, t]) => `${m} ${Math.min(...t).toFixed(1)} ms`).join(", ");
-      document.getElementById("status").textContent =
+      document.getElementById("status").textContent = testNote =
         `Self-test: ${r.report.length} view x method runs, worst fraction of mismatched cells ` +
         `${worst.toExponential(2)}; counts differing between methods: ${nDiff}; ` +
         `readout (CPU) max relative error ${cpuWorst.toExponential(1)}; ` +

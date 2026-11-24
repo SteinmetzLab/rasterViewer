@@ -22,9 +22,14 @@
 const RawUnderlay = (() => {
   const HOSTED = "https://pub-6f7885d91fac46b4a0aad6e22005454a.r2.dev/v1/";
   const MAX_SPAN_S = 0.5;        // longest window with the underlay
-  const MAX_VIEW_TILES = 24;     // most tiles (shanks x 0.2 s) one view may need (about 1 MB each)
+  const MAX_VIEW_TILES = 24;     // most tiles (shanks x 0.2 s) one view may draw. Each is a file of
+                                 // about 1.2 MB, and a shank also needs the two files next to
+                                 // its tiles in time, so a view downloads up to shanks x (tiles + 2)
   const MAX_TEX = 48;            // tiles kept on the GPU (6000 x 384 half floats, 4.6 MB each)
-  const MAX_FILES = 64;          // downloaded chunk files kept in memory (about 1 MB each)
+  const MAX_FILES = 64;          // downloaded chunk files kept in memory (about 1.2 MB each)
+  const MAX_FETCH = 6;           // downloads running at a time
+  const MAX_WAIT = 72;           // downloads waiting to start; older ones are given up
+  const FETCH_MS = 30000;        // a download may take this long from the moment it starts
   const RETRY_MS = 3000;         // a tile that failed to load is asked for again after this
   const ALPHAS = [1, 0.6, 0];    // opacity of the spike cells over the voltage (key O)
   const DEF = { on: true, uv: 100, alpha: 0, motion: true };
@@ -104,6 +109,10 @@ void main() {
   // Where the data are: ?rawbase=<address>; a folder served by serve.py --raw (only looked for
   // on a local server); otherwise the hosted copy. ?rawbase=off switches the underlay off.
   async function load() {
+    try { await find(); }
+    catch (err) { console.warn("raw underlay switched off:", err); man = null; }
+  }
+  async function find() {
     const q = new URLSearchParams(location.search).get("rawbase");
     if (q === "off") return;
     const local = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
@@ -127,9 +136,11 @@ void main() {
       const w = new Worker("raw_worker.js");
       w.busy = false;
       w.onmessage = (e) => finish(w, e.data);
-      w.onerror = (e) => {                  // the worker itself failed: fail its job, free it
+      w.onerror = (e) => {                  // the worker itself failed: fail its job and stop using it
         console.error("raw worker", e.message);
+        workers = workers.filter((x) => x !== w);
         for (const [id, job] of jobs) if (job.worker === w) finish(w, { id, ok: false, error: "worker failed: " + e.message });
+        if (!workers.length) while (queue.length) queue.pop().reject(new Error("no worker is left"));
       };
       workers.push(w);
     }
@@ -182,6 +193,7 @@ void main() {
     })().catch((err) => {
       q.state = "error"; q.failedAt = performance.now();
       console.error("raw underlay, probe " + p, err);
+      setTimeout(requestRender, RETRY_MS + 50);          // a render asks for it again
     }).finally(() => requestRender());
     return q;
   }
@@ -201,6 +213,7 @@ void main() {
     cv = document.getElementById("rawcv");
     g = cv.getContext("webgl2", { antialias: false, alpha: true, premultipliedAlpha: false });
     if (!g) throw new Error("no second WebGL2 context for the raw underlay");
+    if (g.getParameter(g.MAX_TEXTURE_SIZE) < man.tile) throw new Error("the textures of this GPU are too small for a tile");
     P = compileRaw(VS, frag(man.probes[0].motion.depths_um.length));
     vao = g.createVertexArray();
     boundsTex = g.createTexture();
@@ -222,15 +235,32 @@ void main() {
   }
   // A chunk file as downloaded (still compressed). Fetched here and not in the workers, so
   // that a file needed by several tiles (each tile also reads the edges of its two neighbors)
-  // is downloaded once.
-  function file(url) {
+  // is downloaded once. At most MAX_FETCH downloads run at a time, the one asked for last
+  // first, and each has FETCH_MS from the moment it starts.
+  const waiting = [];            // downloads not started yet, the next one last
+  let fetching = 0;
+  function pumpFiles() {
+    while (fetching < MAX_FETCH && waiting.length) {
+      const w = waiting.pop();
+      fetching++;
+      (async () => {
+        const r = await fetch(w.url, { signal: AbortSignal.timeout(FETCH_MS) });
+        if (!r.ok) throw new Error(`${w.url}: HTTP ${r.status}`);
+        return r.arrayBuffer();
+      })().then(w.resolve, w.reject).finally(() => { fetching--; pumpFiles(); });
+    }
+  }
+  // forView: asked for by a tile of the view, so it may be given up when the view has moved on.
+  function file(url, forView = false) {
     let p = files.get(url);
-    if (p) { files.delete(url); files.set(url, p); return p; }
-    p = (async () => {
-      const r = await fetch(url, { signal: AbortSignal.timeout(30000) });
-      if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
-      return r.arrayBuffer();
-    })();
+    if (p) {
+      files.delete(url); files.set(url, p);
+      const i = waiting.findIndex((w) => w.url === url);        // asked for again: next in line
+      if (i >= 0) { const w = waiting.splice(i, 1)[0]; w.forView = w.forView && forView; waiting.push(w); }
+      return p;
+    }
+    p = new Promise((resolve, reject) => waiting.push({ url, resolve, reject, forView }));
+    pumpFiles();
     files.set(url, p);
     p.catch(() => { if (files.get(url) === p) files.delete(url); });
     while (files.size > MAX_FILES) files.delete(files.keys().next().value);
@@ -244,10 +274,13 @@ void main() {
     return true;
   }
   function pump() { while (queue.length && post(queue[queue.length - 1])) queue.pop(); }
-  function call(msg) {                 // -> Promise of the worker's reply
+  // -> Promise of the worker's reply. tile: the key of the view's tile this is for, if any; the
+  // job is then given up if it is still waiting when the tile has left the view.
+  function call(msg, tile = null) {
+    if (!workers.length) return Promise.reject(new Error("no worker is left"));
     return new Promise((resolve, reject) => {
       const id = nextId++;
-      queue.push({ id, msg: { ...msg, id }, resolve, reject });     // newest first
+      queue.push({ id, msg: { ...msg, id }, resolve, reject, tile });     // newest first
       pump();
     });
   }
@@ -257,21 +290,28 @@ void main() {
     if (job) { if (d.ok) job.resolve(d); else job.reject(new Error(d.error)); }
     pump();
   }
-  async function tileData(p, shank, T) {    // processed tile as Float32Array (channels x samples, uV)
+  // The files of a tile: its own and, for the filter's margins, its neighbors in time.
+  function tileUrls(p, shank, T) {
     const pr = man.probes[p];
-    const urls = [T > pr.tile_first ? chunkUrl(p, shank, T - 1) : null, chunkUrl(p, shank, T),
-                  T < pr.tile_last ? chunkUrl(p, shank, T + 1) : null];
-    const bufs = await Promise.all(urls.map((u) => u ? file(u) : null));
-    return call({ type: "tile", urls, bufs, p: tileParams(p, shank) });
+    return [T > pr.tile_first ? chunkUrl(p, shank, T - 1) : null, chunkUrl(p, shank, T),
+            T < pr.tile_last ? chunkUrl(p, shank, T + 1) : null];
+  }
+  async function tileData(p, shank, T, forView = false) {    // processed tile as Float32Array (channels x samples, uV)
+    const urls = tileUrls(p, shank, T);
+    const bufs = await Promise.all(urls.map((u) => u ? file(u, forView) : null));
+    const key = forView ? tileKey(p, shank, T) : null;
+    if (key && !inView(key)) throw new Error("dropped");
+    return call({ type: "tile", urls, bufs, p: tileParams(p, shank) }, key);
   }
   function wantTile(p, shank, T) {     // -> texture, or null while it is being made
     const key = tileKey(p, shank, T);
     let t = tiles.get(key);
     if (!t) {
-      t = { state: "pending", tex: null, used: frame };
+      t = { state: "pending", tex: null, used: frame, urls: tileUrls(p, shank, T) };
       tiles.set(key, t);
-      tileData(p, shank, T).then((d) => {
+      tileData(p, shank, T, true).then((d) => {
         if (tiles.get(key) !== t) return;            // dropped meanwhile
+        if (t.used !== frame) { tiles.delete(key); return; }   // not in the view any more: only its files are kept
         t.tex = g.createTexture();
         g.bindTexture(g.TEXTURE_2D, t.tex);
         g.texImage2D(g.TEXTURE_2D, 0, g.R16F, man.tile, man.n_channels, 0, g.RED, g.FLOAT, d.data);
@@ -280,9 +320,10 @@ void main() {
         requestRender();
       }).catch((err) => {
         if (tiles.get(key) !== t) return;
-        if (err.message === "dropped") { tiles.delete(key); return; }   // asked for again if needed
+        if (err.message === "dropped") { tiles.delete(key); requestRender(); return; }   // asked for again if needed
         t.state = "error"; t.failedAt = performance.now();
         console.error("raw tile", key, err); requestRender();
+        setTimeout(requestRender, RETRY_MS + 50);        // a render asks for it again
       });
     } else if (t.state === "error" && performance.now() - t.failedAt > RETRY_MS) {
       tiles.delete(key);                             // try again on the next frame
@@ -291,8 +332,18 @@ void main() {
     t.used = frame;
     return t.state === "ready" ? t.tex : null;
   }
+  const inView = (key) => { const t = tiles.get(key); return !!t && t.used === frame; };
   function trim() {
-    // drop the oldest queued work when panning has outrun the workers, and the oldest textures
+    // give up downloads that have not started and that no tile of the view needs any more;
+    // drop the oldest queued work when panning has outrun the downloads or the workers, and
+    // the oldest textures
+    const wanted = new Set();
+    for (const t of tiles.values()) if (t.used === frame) for (const u of t.urls) wanted.add(u);
+    for (let i = waiting.length - 1; i >= 0; i--)
+      if (waiting[i].forView && !wanted.has(waiting[i].url)) waiting.splice(i, 1)[0].reject(new Error("dropped"));
+    while (waiting.length > MAX_WAIT) waiting.shift().reject(new Error("dropped"));
+    for (let i = queue.length - 1; i >= 0; i--)
+      if (queue[i].tile && !inView(queue[i].tile)) queue.splice(i, 1)[0].reject(new Error("dropped"));
     while (queue.length > 48) queue.shift().reject(new Error("dropped"));
     if (tiles.size <= MAX_TEX) return;
     const old = [...tiles].filter(([, t]) => t.used !== frame && t.state !== "pending")
@@ -315,7 +366,8 @@ void main() {
       try { initGLRaw(); }
       catch (err) { console.warn("raw underlay switched off:", err); man = null; cv = null; return null; }
     }
-    const hide = () => { cv.style.display = "none"; return null; };
+    frame++;                           // tiles not asked for in this call are no longer in view
+    const hide = () => { cv.style.display = "none"; trim(); return null; };
     if (!R.on || state.ymode !== "depth") return hide();
     const span = state.t1 - state.t0, L = LAY.depth, nspan = state.n1 - state.n0;
     const segs = L.segs.filter((s) => s.y1 > state.n0 && s.y0 < state.n1 && man.probes[s.probe] &&
@@ -323,13 +375,12 @@ void main() {
     if (!segs.length) return hide();
     if (span > MAX_SPAN_S) { info.hint = `raw voltage: zoom in to ${MAX_SPAN_S} s or less`; return hide(); }
     // tiles a view of this length can need per shank, whatever the probe's clock
-    const perShank = Math.ceil(span * man.fs / man.tile) + 1;
+    const perShank = Math.ceil(span * man.fs / man.tile - 1e-6) + 1;
     if (segs.length * perShank > MAX_VIEW_TILES) {
       const ns = Math.floor(MAX_VIEW_TILES / perShank);
       info.hint = `raw voltage: zoom in to ${ns} shanks or fewer` + (perShank > 2 ? ", or to a shorter window" : "");
       return hide();
     }
-    frame++;
     const b = state.block, PW = layout.W * b, PH = layout.H * b;
     if (cv.width !== PW || cv.height !== PH) { cv.width = PW; cv.height = PH; }
     Object.assign(cv.style, { display: "block", left: layout.x + "px", top: layout.y + "px",
@@ -409,10 +460,12 @@ void main() {
   // ------------------------------------------------------------ keys, legend, status, URL
   function key(k) {
     if (!man || state.ymode !== "depth") return false;
+    // only while the voltage is shown; U also brings it back after it was hidden with U
+    if (!info.active && !((k === "u" || k === "U") && !R.on)) return false;
     if (k === "u" || k === "U") R.on = !R.on;
     else if (k === "o" || k === "O") R.alpha = (R.alpha + 1) % ALPHAS.length;
     else if (k === "m" || k === "M") R.motion = !R.motion;
-    else if (k === "[") R.uv = Math.max(5, R.uv / 2);
+    else if (k === "[") R.uv = Math.max(6.25, R.uv / 2);
     else if (k === "]") R.uv = Math.min(3200, R.uv * 2);
     else return false;
     return true;
@@ -483,7 +536,7 @@ void main() {
     out.draw = await testViews();
     out.ok = out.probes.every((q) => q.ok) && out.decode.every((q) => q.ok) && out.process.length > 0 &&
       out.process.every((q) => q.sameLength && q.maxAbsDiff_uV < 0.01) &&
-      out.draw.every((q) => !q.error && q.fracDiffer < 0.005 && q.drawn > 0.5 * q.pixels);
+      out.draw.every((q) => !q.error && q.fracDiffer < 0.005 && q.drawn > 0.5 * q.pixels && q.cellsWrong === 0 && q.aligned);
     return out;
   }
 
@@ -543,7 +596,25 @@ void main() {
         }
       }
     }
-    return { pixels, drawn, differ, fracDiffer: differ / Math.max(1, pixels), maxDiff };
+    // The spike cells on the main canvas: opaque where a cell holds spikes, transparent elsewhere
+    // in the shanks shown, untouched outside them. And the two canvases cover the same rectangle.
+    const W = layout.W, H = layout.H, v0 = readValues(W, H, 0), v2 = readValues(W, H, 2);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    const mp = new Uint8Array(W * H * 4);
+    gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, mp);
+    const shown = LAY.depth.segs.filter((sg) => sg.y1 > state.n0 && sg.y0 < state.n1);
+    let cellsWrong = 0;
+    for (let y = 0; y < H; y++) {
+      const nc = state.n0 + (y + 0.5) * nspan / H, inside = shown.some((sg) => nc >= sg.y0 && nc < sg.y1);
+      for (let x = 0; x < W; x++) {
+        const spikes = v0[y * W + x] > 0 || (state.spikes === "overlay" && v2[y * W + x] > 0);
+        const want = !inside ? 255 : spikes ? Math.round(255 * ALPHAS[R.alpha]) : 0;
+        if (Math.abs(mp[((H - 1 - y) * W + x) * 4 + 3] - want) > 1) cellsWrong++;
+      }
+    }
+    const ra = cvs.getBoundingClientRect(), rb = cv.getBoundingClientRect();
+    const aligned = ["left", "top", "width", "height"].every((q) => Math.abs(ra[q] - rb[q]) < 0.01);
+    return { pixels, drawn, differ, fracDiffer: differ / Math.max(1, pixels), maxDiff, cells: W * H, cellsWrong, aligned };
   }
   // checkDraw on a few views: one shank; a shank that had moved by tens of micrometers; four
   // shanks across a tile edge and across a change of the motion estimate (a whole second of
@@ -557,6 +628,7 @@ void main() {
       { name: "four shanks across a second", t0: timeAt(4, 1749 * 30000) - 0.15, t1: timeAt(4, 1749 * 30000) + 0.15,
         n0: seg(4, 0).y0, n1: seg(4, 3).y1 },
       { name: "motion shift off", t0: 273.50, t1: 273.58, n0: seg(1, 0).y1 - 420, n1: seg(1, 0).y1, motion: false },
+      { name: "two probes (two clocks)", t0: 1125.04, t1: 1125.10, n0: seg(0, 3).y1 - 300, n1: seg(1, 0).y0 + 300 },
     ];
     const out = [], keep = { ...R };
     for (const v of views) {
@@ -574,6 +646,11 @@ void main() {
   return { load, draw, key, drawLegend, status, toHash, fromHash, test, checkDraw,
            get available() { return !!man; }, get info() { return info; }, get settings() { return { ...R }; },
            get manifest() { return man; },
+           get stats() {      // for checks: what is held and what is under way
+             return { tiles: tiles.size, textures: [...tiles.values()].filter((t) => t.tex).length, files: files.size,
+                      waiting: waiting.length, fetching, queued: queue.length, jobs: jobs.size, frame,
+                      inView: [...tiles.values()].filter((t) => t.used === frame).length };
+           },
            // for checks: probe sample at a viewer time, and the motion estimate used for a tile
            sampleAt: (p, t) => { const q = probes.get(p); return q && q.state === "ready" ? interp(q.t, q.s, t) : NaN; },
            motionAt: (p, shank, T) => { const q = probes.get(p); return q && q.state === "ready" ? Array.from(motionOf(q, shank, T)) : null; } };

@@ -152,6 +152,11 @@
   The view is saved in the URL, so it can be bookmarked.
 </div>
 <div id="loading"><div id="loadMsg">Loading spikes</div></div>
+<script>
+  // The raw voltage can only be read from the https address of this page.
+  if (location.protocol === "http:" && /(^|\.)steinmetzlab\.net$/.test(location.hostname))
+    location.replace("https://" + location.host + location.pathname + location.search + location.hash);
+</script>
 <script src="raw_underlay.js"></script>
 <script src="sonify.js"></script>
 <script src="viewer.js"></script>

@@ -132,8 +132,9 @@ the new view.
 
 With **Neurons** set to *Plotted by depth*, a window of 0.5 s or less and a few shanks in view
 (up to 12 at 0.2 s or less, 6 at 0.5 s), the recorded voltage of every site is drawn in gray
-under the spikes, for all 7 probes and the whole session. When a view is close, the status line
-says what to zoom. Clicking a shank's label and zooming time in is the quickest way there.
+under the spikes, for all 7 probes and the whole session. Whenever neurons are plotted by depth
+and the view does not qualify, the status line says what to zoom. Clicking a shank's label and
+zooming time in is the quickest way there. The keys below act only while the voltage is shown.
 
 | Key | Does |
 |---|---|
@@ -152,8 +153,10 @@ says what to zoom. Clicking a shank's label and zooming time in is the quickest 
   motion-corrected data and a unit's depth is in those coordinates.
 - **The data** are the recorded samples with the 2 lowest bits dropped (steps of 12 µV, which
   adds about 3% to a site's noise), SIZE_SHORT_PLACEHOLDER in a public Cloudflare R2 bucket. They
-  are downloaded as needed, about 1.2 MB per shank for every 0.2 s, and kept by the browser's
-  cache. The bucket lets pages on `www.steinmetzlab.net` and `localhost:8765` / `8771` read it.
+  are downloaded as needed, about 1.2 MB per shank for every 0.2 s plus the 0.2 s before and
+  after the view (so 0.3 s of one probe is about 25 MB), six files at a time, and kept by the
+  browser's cache. The bucket lets pages on `https://www.steinmetzlab.net` and
+  `localhost:8765` / `8771` read it; the page sends visitors of its http address to https.
 - **Only QC-passing units are marked**, which is 49% of the spikes Kilosort assigned, so clear
   waveforms without a mark are common.
 - `?rawbase=off` switches the underlay off; `python serve.py --raw <folder>` uses a local copy
@@ -320,7 +323,7 @@ about 10 ms. Before search, panning the whole session ran at about 6 frames/s on
 - **Raw voltage**: `?rawtest=1` checks, against the hosted data, that the clock and motion
   files of all 7 probes load, that one chunk of each of the 28 shanks decodes to the stored
   sum, that the display processing of three tiles equals the Python reference bit for bit,
-  and that the drawing of four views equals the rule recomputed pixel by pixel (0.06% of
+  and that the drawing of five views equals the rule recomputed pixel by pixel (0.06% of
   pixels differ at most, at sample and site boundaries). The checks of the data themselves
   are listed in `raw_underlay/README.md`.
 - **Sonify**: `?sonifytest=1` runs 36 checks in the browser:
@@ -385,7 +388,9 @@ present, and the packed ones otherwise.
 ## Known limits and next steps
 
 - GPU memory: about 610 MB (the spikes twice, by time and by neuron), plus about 370 MB of
-  ordinary memory. Fine on the TITAN V and the M3 Max; a laptop with a small integrated GPU
+  ordinary memory. The raw voltage adds, while in use, up to about 220 MB on the GPU (48
+  tiles) and up to about 370 MB of ordinary memory (decoded chunks in 4 workers, downloaded
+  files). Fine on the TITAN V and the M3 Max; a laptop with a small integrated GPU
   may fail to start or fall back to the slower counting method. Keeping only the search
   method would roughly halve the GPU memory.
 - The online copy is public: anyone with the address can view and download the data, and
