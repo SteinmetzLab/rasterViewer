@@ -6,6 +6,7 @@
 // row) texture (pass 1), then each cell averages its rows with overlap weights, restricted
 // to the shank segment under the cell's center (pass 2), then a log color map (pass 3).
 // reference.py implements the same semantics on the CPU; ?test=1 compares the two.
+// sonify.js plays the view as sound (the Sonify button); ?sonifytest=1 checks it.
 "use strict";
 
 const DATA = "data/";
@@ -665,12 +666,13 @@ function lowerBound(arr, x) {      // first index with arr[i] >= x
 // method: "points", "search" or "auto" (both give identical counts).
 function countSpikes(v, W, method, rlo, rhi, set = SETS.all, target = res.counts) {
   const R = rhi - rlo;
-  const base = Math.ceil(v.T0), Tend = v.T0 + W * v.dT;
+  const j0 = v.j0 || 0, T0 = v.T0 + j0 * v.dT;         // j0: whole-column shift of the grid (viewGrid)
+  const base = Math.ceil(T0), Tend = v.T0 + (j0 + W) * v.dT;
   const i0 = lowerBound(set.ticks, base), i1 = lowerBound(set.ticks, Math.ceil(Tend));
 
   // integer column boundaries (float64 here), used by pass 1 and for durations in pass 2
   const bnd = new Uint32Array(W + 1);
-  for (let j = 0; j <= W; j++) bnd[j] = Math.ceil(v.T0 + j * v.dT);
+  for (let j = 0; j <= W; j++) bnd[j] = Math.ceil(v.T0 + (j0 + j) * v.dT);
   if (!res.bounds) res.bounds = gl.createTexture();
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, res.bounds);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32UI, W + 1, 1, 0, gl.RED_INTEGER, gl.UNSIGNED_INT, bnd);
@@ -698,7 +700,7 @@ function countSpikes(v, W, method, rlo, rhi, set = SETS.all, target = res.counts
   } else if (i1 > i0) {
     gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE); gl.blendEquation(gl.FUNC_ADD);
     const P = prog.points; gl.useProgram(P.p);
-    gl.uniform1ui(P.u.u_base, base); gl.uniform1f(P.u.u_frac, base - v.T0);
+    gl.uniform1ui(P.u.u_base, base); gl.uniform1f(P.u.u_frac, base - T0);
     gl.uniform1f(P.u.u_dT, v.dT);
     gl.uniform1i(P.u.u_W, W); gl.uniform1i(P.u.u_rlo, rlo); gl.uniform1i(P.u.u_R, R);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, res.bounds);
@@ -833,7 +835,7 @@ function cellCPU(v, W, H, j, k, norm, eps, L = lay(), spikes = state.spikes) {
     ovs[p - pa] = Math.max(0, Math.min(sp.b, lo + L.unit) - Math.max(sp.a, lo)) / L.unit;
     den += ovs[p - pa]; slot.set(L.order[p], p - pa);
   }
-  const c0 = v.T0 + j * v.dT, c1 = v.T0 + (j + 1) * v.dT;
+  const jg = (v.j0 || 0) + j, c0 = v.T0 + jg * v.dT, c1 = v.T0 + (jg + 1) * v.dT;
   const lo = lowerBound(ticks, Math.ceil(c0)), hi = lowerBound(ticks, Math.ceil(c1));
   for (let s = lo; s < hi; s++) {
     const q = slot.get(rows[s]);
@@ -875,7 +877,12 @@ function computeLayout() {
   ctx = ov.getContext("2d");
 }
 
+// The grid of the view. j0 (optional, an integer): the columns are those of the grid starting at
+// T0, shifted by j0 columns: column j covers ticks T0 + (j0 + j) * dT onward. While sonify plays
+// it moves the view by whole columns this way, so each column keeps exactly the same ticks.
 function viewGrid() {
+  const g = Sonify.grid();
+  if (g) return { ...g, n0: state.n0, n1: state.n1 };
   return { T0: state.t0 * FS, dT: (state.t1 - state.t0) * FS / layout.W,
            n0: state.n0, n1: state.n1 };
 }
@@ -909,6 +916,7 @@ function render() {
   const r = computeValues(v, layout.W, layout.H, state.mode === "norm", state.eps);
   drawColormapped(layout.W, layout.H, s);
   lastDraw = { ...r, ms: performance.now() - t };
+  Sonify.afterRender();    // while playing: schedule the sound of the columns just drawn
   if (pinned && pinned.key !== viewKey()) pinned = null;   // a pin lasts until the view changes
   drawOverlay();
   updateStatus();
@@ -962,7 +970,8 @@ function drawOverlay() {
   ctx.moveTo(px, py + ph + 0.5); ctx.lineTo(px + pw, py + ph + 0.5); ctx.stroke();
   ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.fillStyle = ink2;
   for (let t = Math.ceil(state.t0 / step) * step; t <= state.t1 + 1e-12; t += step) {
-    const xx = px + (t - state.t0) / span * pw;
+    const xx = px + (t - state.t0) / span * pw - Sonify.shiftCss;   // moves with the raster while playing
+    if (xx < px - 0.5) continue;
     ctx.beginPath(); ctx.moveTo(xx, py + ph); ctx.lineTo(xx, py + ph + 5); ctx.stroke();
     ctx.fillText(fmtNum(t, step), xx, py + ph + 8);
   }
@@ -1066,6 +1075,7 @@ function drawOverlay() {
   ctx.fillText(state.mode === "abs" ? `Mean ${what} (${unit})`
                : `${what[0].toUpperCase() + what.slice(1)} / (session mean + ${state.eps} spikes/s)`, 0, 0);
   ctx.restore();
+  Sonify.drawHead(ctx);
 }
 
 function updateStatus() {
@@ -1085,7 +1095,7 @@ function updateStatus() {
     (state.spikes !== "all" && burst.flags ? `bursts: ${SETS.onset.n.toLocaleString("en-US")} ` +
       `(${(100 * SETS.burst.n / ticks.length).toFixed(1)}% of spikes) at ≥${burst.params.S} ms silence, ` +
       `ISI ≤${burst.params.M} ms, ≥${burst.params.K} spikes · ` : "") +
-    `counted by ${lastDraw.path} · ${lastDraw.ms.toFixed(1)} ms to submit`;
+    `counted by ${lastDraw.path} · ${lastDraw.ms.toFixed(1)} ms to submit` + Sonify.status();
 }
 
 // ---------------------------------------------------------------- hover
@@ -1224,7 +1234,9 @@ function setupInteraction() {
     lastMouse = m; altHeld = e.altKey;
     stage.style.cursor = !drag && hitAt(m) ? "pointer" : "";
     if (drag) drag.maxd = Math.max(drag.maxd || 0, Math.hypot(m.x - drag.x, m.y - drag.y));
-    if (drag && drag.kind === "pan") {
+    if (drag && drag.kind === "pan" && Sonify.playing && drag.maxd < 4) {
+      // a click while the view scrolls: nothing to pan yet
+    } else if (drag && drag.kind === "pan") {
       const dt = -(m.x - drag.x) / layout.w * (drag.t1 - drag.t0);
       const dn = -(m.y - drag.y) / layout.h * (drag.n1 - drag.n0);
       state.t0 = drag.t0 + dt; state.t1 = drag.t1 + dt;
@@ -1254,7 +1266,9 @@ function setupInteraction() {
     } else if (drag && drag.kind === "pan") {
       // a click (no real drag) pins the tooltip to that cell, until the view changes
       const m = toLocal(e);
-      if (Math.max(drag.maxd || 0, Math.hypot(m.x - drag.x, m.y - drag.y)) < 4) {
+      if (Sonify.playing) {
+        // no pinned readout while the view scrolls (it would be cleared at the next step)
+      } else if (Math.max(drag.maxd || 0, Math.hypot(m.x - drag.x, m.y - drag.y)) < 4) {
         Object.assign(state, { t0: drag.t0, t1: drag.t1, n0: drag.n0, n1: drag.n1 });
         clampView();
         const inPlot = m.x >= layout.x && m.x < layout.x + layout.w &&
@@ -1279,6 +1293,7 @@ function setupInteraction() {
 
   window.addEventListener("keydown", (e) => {
     if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+    if (e.ctrlKey || e.metaKey) return;        // Ctrl / Cmd combinations belong to the browser
     const ts = state.t1 - state.t0, ns = state.n1 - state.n0;
     const k = e.key;
     if (k === "ArrowLeft") { state.t0 -= ts * 0.2; state.t1 -= ts * 0.2; }
@@ -1290,7 +1305,10 @@ function setupInteraction() {
     else if (k === "r" || k === "R") resetView();
     else if (k === "a" || k === "A") { state.n0 = 0; state.n1 = lay().Y; }
     else if (k === "Escape") { pinned = null; }
-    else if (k === "s" || k === "S") { state.t0 = TS; state.t1 = TE; }
+    else if (k === "w" || k === "W") { state.t0 = TS; state.t1 = TE; }
+    else if ((k === "s" || k === "S" || k === " ") && !e.altKey) {
+      e.preventDefault(); if (!e.repeat) Sonify.toggle(); return;
+    }
     else return;
     e.preventDefault(); clampView(); requestRender();
   });
@@ -1379,6 +1397,7 @@ function scheduleHash() {
       n0: state.n0.toFixed(3), n1: state.n1.toFixed(3), ymode: state.ymode, spikes: state.spikes,
       bS: state.burst.S, bM: state.burst.M, bK: state.burst.K, mode: state.mode, eps: state.eps,
       block: state.block, vmin: s.vmin, vmax: s.vmax, cmap: s.cmap });
+    Sonify.toHash(p);
     history.replaceState(null, "", location.pathname + location.search + "#" + p);
   }, 300);
 }
@@ -1401,6 +1420,7 @@ function readHash() {
   if (a > 0) s.vmin = a;
   if (b > s.vmin) s.vmax = b; else if (s.vmax <= s.vmin) s.vmax = s.vmin * 10;
   if (p.has("cmap") && meta.colormaps[p.get("cmap")]) s.cmap = p.get("cmap");
+  Sonify.fromHash(p);
 }
 
 // ---------------------------------------------------------------- self-test (?test=1)
@@ -1505,6 +1525,7 @@ async function runTests() {
     readHash();
     clampView();
     setupControls();
+    Sonify.setup();
     syncControls();
     computeLayout();
     setupInteraction();
@@ -1515,7 +1536,14 @@ async function runTests() {
     }
     document.getElementById("loading").style.display = "none";
     render();
-    if (new URLSearchParams(location.search).has("test")) {
+    if (new URLSearchParams(location.search).has("sonifytest")) {
+      document.getElementById("status").textContent = "Running the sonify self-test";
+      const r = await Sonify.test();
+      const bad = r.checks.filter((c) => !c.pass).map((c) => c.name);
+      document.getElementById("status").textContent = `Sonify self-test: ${r.passed} of ${r.total} checks passed` +
+        (bad.length ? `; FAILED: ${bad.join("; ")}` : "") + "; details in console / window.__sonifyTest";
+      requestRender();
+    } else if (new URLSearchParams(location.search).has("test")) {
       document.getElementById("status").textContent = "Running self-test";
       const r = await runTests();
       const worst = Math.max(...r.report.map((x) => x.skipped ? 0 : x.fracBad));

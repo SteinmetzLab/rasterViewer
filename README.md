@@ -41,7 +41,8 @@ battery.
 | Box zoom | Ctrl + drag, Cmd + drag on a Mac, or right-drag |
 | Jump in time | Click or drag in the population-rate strip at the top |
 | Zoom to a probe or shank | Click its label (or its color band) on the neuron axis |
-| Reset / all neurons / whole session | Buttons, or keys R / A / S; + and − zoom time |
+| Reset / all neurons / whole session | Buttons, or keys R / A / W; + and − zoom time |
+| Sonify (play the view as sound) | The Sonify button, or S or the space bar; see "Sonify" below |
 | Readout | Off by default. Click a cell to show it (it stays until the view changes; Esc clears it), or hold Alt (Option on a Mac) to have it follow the pointer. It gives the time, the neuron under the pointer (cluster id, probe, shank, position along the shank, session rate), and the cell's spike count, neuron count, duration and value |
 
 Controls in the top bar:
@@ -88,6 +89,43 @@ Controls in the top bar:
   cells average over more neurons and time, and individual spikes become bigger blocks.
 - **Color range** (log scale) and **Map**.
 - The view is kept in the URL (`#t0=...&t1=...`), so a view can be bookmarked.
+
+## Sonify
+
+**Sonify** (the button, S, or the space bar) plays the view as sound. A line is drawn at the
+middle time of the view, the raster scrolls left under it, and what crosses the line is played.
+Press again to stop. Everything can be changed while it plays: pan, zoom, the neuron ordering,
+the spike selection, the color range. Panning or zooming in time continues from the middle of
+the new view.
+
+- **Speed.** The raster always moves at the same speed on the screen: one plot width in 30 s
+  (the *Crossing* setting: 10, 20, 30 or 60 s). The playback rate therefore follows the zoom:
+  the whole 40 min session in view plays at 81 times real time, a 3 s window at 1/10 of real
+  time. The status bar shows the rate.
+- **Pitch.** The vertical axis of the current view maps to pitch, high at the top, over 4
+  octaves centered on A4 (*Range*: 2 to 5). This holds for every neuron ordering and any
+  vertical zoom. Each cell row sounds the nearest note of the chosen *Key* and *Scale* (major
+  or minor pentatonic, major, natural minor, whole tone, 12-tone), or, with *No rounding*, one
+  of up to 64 equal pitch bands. When neurons are taller than a cell, all of a neuron's cells
+  sound the single note of the neuron's middle, so a neuron is one note.
+- **Loudness follows color.** With t a cell's position on the color scale (0 at the bottom of
+  the color range, 1 at the top), its level is 36 dB x (1 - t) below full, and silent at t = 0
+  (no spikes, or a rate at or below the bottom of the color range). A note's level is the RMS
+  of the levels of its cells. So the color range sets what is audible, and bright is loud.
+- **Single spikes and firing rates are one mechanism.** Each note is an oscillator whose
+  loudness follows the note's level with a fast attack and a slower release (the *Sound*
+  setting: marimba, harp, organ, pure tone). Zoomed in, a spike is one bright cell: the level
+  jumps for one column and falls back, which is a struck note that rings out. Zoomed out, the
+  level changes a little from column to column: a sustained tone whose loudness follows the
+  firing rate. In between, spikes that arrive faster than the release fuse into a tremolo.
+- **What you hear is what you see.** The sound is computed from the cell values as drawn, one
+  column at a time; the view advances by whole columns so a column holds the same spikes on
+  every frame. Timing is therefore quantized to one column: 1/W of the crossing time, about 40
+  ms of playing time for a 740-column plot at 30 s (finer with a wider plot or Cell = 1).
+- Where the view cannot scroll (the window touches the start or the end of the session) the
+  view stays and the line moves instead. Started with the window at the session start, the
+  line starts at the left edge, so the beginning is not skipped.
+- The settings are kept in the URL. Playing stops when the tab is hidden.
 
 ## What each cell shows (exact definition)
 
@@ -243,6 +281,28 @@ about 10 ms. Before search, panning the whole session ran at about 6 frames/s on
   could not be shown, the colorbar was off by one color-table step, the raster could shift by a
   pixel at fractional display scaling, and "depth" was a misleading label.
 
+- **Sonify**: `?sonifytest=1` runs 36 checks in the browser:
+  - the notes of four scales against hand-written lists;
+  - rows to notes for every ordering (highest note at the top, never rising downward, one note
+    per neuron when zoomed in, and for "plotted by depth" against a brute-force search);
+  - the transport (which column sounds when, and where the view and the line are) run on a
+    simulated clock for six cases, including the session start, the session end, the whole
+    session in view and stalled frames: every column is scheduled exactly once, before it
+    sounds, from inside the view, and the line is over the column being heard;
+  - the synthesis rendered offline with known levels (amplitude within 2% of level, attack and
+    release times, silence before a note's column, no leakage between notes, frequencies);
+  - for six real views, the note levels the player reads back from the picture against levels
+    computed from the float64 readout (`cellCPU`) with separate code (largest difference 6e-8).
+
+  Live runs in Chrome, recording the output with an analyser: the playback rate equals the
+  window divided by the crossing time; the sound of 10 isolated spikes rose 4 to 18 ms after
+  the time scheduled for their column (the measurement resolves one 17 ms frame); the
+  whole-session view sounds throughout; over 123 scroll steps a column's cell values did not
+  change. An independent review found that the first version went silent whenever the view
+  stood still (the whole-session view among them), which the self-test then could not see; the
+  scheduling now runs every frame and the transport checks above were added. Not checked by
+  ear by the author of the code. Only Chrome on Windows was run; Safari and Firefox are untested.
+
 ## Data files
 
 `data/` holds everything the viewer loads:
@@ -266,6 +326,7 @@ present, and the packed ones otherwise.
 | File | Role |
 |---|---|
 | `index.html`, `viewer.js` | The viewer (no external libraries) |
+| `sonify.js` | Plays the view as sound (Web Audio API); `?sonifytest=1` |
 | `serve.py` | Local server for this folder (Windows or macOS) |
 | `prep_data.py` | ALF + movie export to raw `ticks.u32`, `rows.u16`, and `meta.json` |
 | `pack_data.py` | Packs the raw spike files for the web; `load_spikes()` reads either form |

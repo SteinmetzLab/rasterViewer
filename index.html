@@ -49,6 +49,18 @@
 <div id="bar">
   <span id="title">FD_016 population raster</span>
   <div class="sep"></div>
+  <button id="sonify" title="Play the view as sound: the raster scrolls under a line and what crosses it is played (S or space)">Sonify</button>
+  <span id="sonWrap" style="display:none; gap:10px; align-items:center; color:var(--ink2)">
+    <label>Key <select id="sonKey"></select></label>
+    <label title="Each row sounds the nearest note of this scale">Scale <select id="sonScale"></select></label>
+    <label title="How a note rises and rings out">Sound <select id="sonInst"></select></label>
+    <label title="Pitch range from the bottom to the top of the plot, centered on A4 (440 Hz)">Range
+      <select id="sonOct"></select> octaves</label>
+    <label title="Time the raster takes to cross the plot. The playback rate follows from the zoom.">Crossing
+      <select id="sonCross"></select> s</label>
+    <label>Volume <input id="sonVol" type="range" min="0" max="1.5" step="0.05" style="width:70px; padding:0"></label>
+  </span>
+  <div class="sep"></div>
   <label>Color by
     <select id="mode">
       <option value="abs">Firing rate (spikes/s)</option>
@@ -89,7 +101,7 @@
   <div class="sep"></div>
   <button id="reset" title="Whole session, all neurons (R)">Reset</button>
   <button id="allN" title="Show all neurons, keep time window (A)">All neurons</button>
-  <button id="allT" title="Whole session, keep neurons (S)">Whole session</button>
+  <button id="allT" title="Whole session, keep neurons (W)">Whole session</button>
   <button id="helpBtn">Help</button>
 </div>
 <div id="stage">
@@ -109,7 +121,12 @@
   <b>Zoom to a probe or shank:</b> click its label (or its color band) on the left.<br>
   <b>Readout:</b> click a cell to show its values (until the view changes; Esc clears), or
   hold Alt (Option on a Mac) to have it follow the pointer.<br>
-  <b>Keys:</b> R reset, A all neurons, S whole session, + / − zoom time.<br><br>
+  <b>Keys:</b> R reset, A all neurons, W whole session, + / − zoom time, S or space sonify.<br>
+  <b>Sonify:</b> the raster scrolls left under a line, one plot width in 30 s at any zoom, and
+  what crosses the line is played. Height is pitch (high at the top, rounded to the chosen
+  scale) and color is loudness, so the color range also sets what is audible. Zoomed in, each
+  spike is a struck note; zoomed out, each note is a sustained tone that follows the firing
+  rate. You can pan, zoom and change the display while it plays.<br><br>
   Each displayed cell is the mean firing rate over every neuron and instant it covers.
   <b>Neurons</b> sets the vertical axis: sorted by depth (probe, shank, then position along
   the shank, shallow at top, one row per neuron); plotted by depth (each shank to scale, each
@@ -125,6 +142,7 @@
   The view is saved in the URL, so it can be bookmarked.
 </div>
 <div id="loading"><div id="loadMsg">Loading spikes</div></div>
+<script src="sonify.js"></script>
 <script src="viewer.js"></script>
 </body>
 </html>
