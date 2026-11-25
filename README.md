@@ -155,8 +155,7 @@ voltage is shown.
   one sample. Depth is shifted by the sorter's motion estimate, because the sort ran on
   motion-corrected data and a unit's depth is in those coordinates.
 - **The data** are in a public Cloudflare R2 bucket, in two copies. The viewer normally
-  draws from the *display copy* (about 450 GB; being uploaded during the night of 2026-11-24,
-  and until it is complete the other copy is drawn): the voltage already filtered and referenced
+  draws from the *display copy* (441 GB): the voltage already filtered and referenced
   as above, one byte per value in steps of 6 µV, with every sample in tiles of 50 ms (about
   0.3 MB per shank) and, for windows from about 0.3 s, the largest of every 8 samples in
   tiles of 0.5 s (about 0.4 MB per shank). A view of one probe for 50 ms downloads 1 to 2 MB;

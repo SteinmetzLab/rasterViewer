@@ -11,8 +11,8 @@ night because the first was slow to view from a home connection) is the same vol
 filtered and referenced, in small tiles at two time resolutions; the viewer uses it by
 default and key V switches between the two.
 
-**Status, 2026-11-24, late evening:** the display copy is being converted and uploaded (about
-8 hours). Until its manifest is in the bucket, the viewer draws from the recorded samples.
+**Status, 2026-11-25:** both copies are complete in the bucket and the viewer draws from the
+display copy.
 
 This folder holds the code that made the hosted data and the checks on it. The viewer side is
 `../raw_underlay.js` and `../raw_worker.js`.
@@ -132,8 +132,12 @@ and the files it names); the viewer needs both manifests.
 - **Fetching ahead**: when a view is complete, the tiles before and after it in time (as many
   as it shows, within the same limits) are fetched and kept as textures, so that panning by
   up to a window's width shows voltage at once.
-- **Size**: about 450 GB expected: per shank and second of recording, 5.5 to 6.2 MB at level 0 and
-  0.8 MB at level 1. Exact numbers follow when the conversion is done.
+- **Size**: 1,497,144 tiles, 440.7 GB in all: 1,361,040 tiles of level 0 (389.6 GB, about
+  0.29 MB each) and 136,104 of level 1 (51.1 GB, about 0.38 MB each). Per shank and second
+  of recording that is 5.7 MB at level 0 and 0.75 MB at level 1 on average (6.1 to 7.0 MB
+  together, depending on the shank). Stored are the whole seconds 158 to 2587 or 2588 of
+  each probe's recording. With the first copy the bucket holds 841 GB, about $12.60 per
+  month at R2's storage price.
 - **Why it is not much smaller than the first copy**: filtered noise does not compress. At
   6 µV steps a value costs about 4 bits, as much as a 12 µV step of the unfiltered samples
   with a delta filter. The gain is in what a view needs: no neighboring tiles for the
@@ -176,8 +180,9 @@ display manifest. `convert` uploads each tile as it is made and keeps no copy on
 made for testing the viewer); the progress files record every tile's size, MD5 and sum.
 `sync` lists the bucket, converts again whatever is missing or different, and uploads the
 manifest last, and only when every tile is there: the viewer takes the manifest as the sign
-that the copy is complete. The whole recording takes about 8 hours on one desktop (13
-processes).
+that the copy is complete. The whole recording took 7.1 hours on one desktop (13
+processes). The bucket refused 24 of the uploads ("ServiceUnavailable"); `sync` made those
+tiles again.
 
 ## Checks
 
@@ -191,10 +196,15 @@ processes).
   recomputed from the `.cbin` files with code that shares nothing with the converter (the
   `mtscomp` reader, scipy's `sosfiltfilt` over 5 s around the tile in one piece, zarr-python
   for local tiles). A value may differ by one count only where the recomputed value lies
-  within 0.02 count of a rounding boundary. On 32 tiles of a test
-  stretch, 0 of 20.7 million values differed and 8 were such boundary cases; the check of
-  the whole copy follows the conversion.
-- **Display copy, upload** (`make_display.py sync`): follows the conversion.
+  within 0.02 count of a rounding boundary. On 2026-11-25, 280 tiles
+  as the bucket serves them (for each of the 28 shanks and both levels: the first tile, the
+  last and 3 at random; 181.4 million values) were checked: 0 values differ, and 228 are
+  such boundary cases.
+- **Display copy, upload** (`make_display.py sync`): on 2026-11-25 the first run found 4,688
+  tiles missing (the 24 refused uploads, and 4,664 tiles of test stretches that had been
+  converted before without uploading), made them again and uploaded them. A second run listed the bucket again: all 1,497,144 tiles are
+  there with the recorded size and MD5, and nothing else is under `d1/` besides the 113
+  small files.
 - **Display copy in the browser** (`?rawtest=1`): one tile of every shank and level decodes
   to the sum recorded at conversion; level 1 equals the largest magnitude per block of level
   0 for three tiles, value by value; level 0 differs from the recorded samples filtered in
@@ -257,9 +267,15 @@ processes).
 
 ## Known limits
 
-- **Several units on one waveform.** Some large spikes extend over 100 µm or more along the
-  shank and carry the marks of two or more sorted units at different depths, probably spikes
-  of different neurons that coincided and that the sorter separated.
+- **Several units on one waveform.** A spike that travels along the shank (150 to 200 µm in
+  about 0.3 ms, as in cortical pyramidal cells) often carries the marks of two or more sorted
+  units, one deeper and earlier, one higher and later. This is a property of the sort and not
+  of the display. The likely cause, not yet tested by sorting again, is that Kilosort 4's
+  templates reach only 60 to 90 µm here, so that the upper part of such a waveform is fitted
+  by a second unit. In a check on 2026-11-24, 564 pairs of QC units
+  on the same shank had a narrow peak in their cross-correlogram within 1 ms (16% of the
+  units; 2.5% of all marked spikes are such second marks, 8.5% on Probe 1). The analysis is
+  kept with the lab's sorting work, not in this repository.
 - **Unmarked spikes.** Only units that passed quality control are in the viewer: 49% of the
   spikes Kilosort assigned. Clear waveforms without a mark are usually spikes of a cluster
   that failed.
