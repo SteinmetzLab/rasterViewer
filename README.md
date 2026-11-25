@@ -152,7 +152,7 @@ zooming time in is the quickest way there. The keys below act only while the vol
   one sample. Depth is shifted by the sorter's motion estimate, because the sort ran on
   motion-corrected data and a unit's depth is in those coordinates.
 - **The data** are the recorded samples with the 2 lowest bits dropped (steps of 12 µV, which
-  adds about 3% to a site's noise), SIZE_SHORT_PLACEHOLDER in a public Cloudflare R2 bucket. They
+  adds about 3% to a site's noise), 400 GB in a public Cloudflare R2 bucket. They
   are downloaded as needed, about 1.2 MB per shank for every 0.2 s plus the 0.2 s before and
   after the view (so 0.3 s of one probe is about 25 MB), six files at a time, and kept by the
   browser's cache. The bucket lets pages on `https://www.steinmetzlab.net` and

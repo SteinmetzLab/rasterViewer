@@ -71,7 +71,9 @@ a Zarr reader returns zeros outside.
 - **Chunk format**: delta along time, then zlib (level 4). A browser decodes a chunk with
   its built-in `DecompressionStream("deflate")` and a running sum; zarr-python reads the
   arrays as they are.
-- **Size**: SIZE_PLACEHOLDER
+- **Size**: 340,128 tiles of about 1.18 MB, 400.5 GB in all, 3.9 times smaller than the
+  int16 samples (3.5 to 4.6 times, depending on the shank). Only the period that has spikes
+  in the viewer is stored: tiles 793 to 12939 or 12940 of each probe's recording.
 - **Cost and limits**: R2 charges $0.015 per GB per month for storage and nothing for
   downloads. The `r2.dev` address is meant by Cloudflare for development: it is rate-limited
   (hundreds of requests per second) and not cached at their edge. Tiles are served with a
@@ -97,14 +99,20 @@ a Zarr reader returns zeros outside.
 the output folder and uploads each one; it can be stopped and restarted. `sync` compares the
 bucket with what was written (name, size, MD5), uploads what is missing, and fails while any
 tile of the manifest's range is absent. KEYS.json holds the bucket's credentials and is not in
-this repository. The whole recording took TIME_PLACEHOLDER on one desktop (13 processes).
+this repository. The whole recording took about 4 hours on one desktop (13 processes), about 24 tiles
+(28 MB) per second, reading from and writing to the lab's file server.
 
 ## Checks
 
 - **Stored samples** (`verify_raw.py`): tiles read through zarr-python are compared with the
   same samples read from the `.cbin` files by the `mtscomp` package, neither being the
-  converter's own code. VERIFY_PLACEHOLDER
-- **Upload** (`make_raw.py sync`): SYNC_PLACEHOLDER
+  converter's own code. On 2026-11-24, 140 tiles (for each of the 28 shanks its first tile,
+  its last and 3 at random) were checked from the staging copy and as the bucket serves
+  them: 0 differ, and the largest error of the value the viewer uses is 1.5 counts, the
+  limit when 2 bits are dropped.
+- **Upload** (`make_raw.py sync`): 1 upload of the 340,128 failed during the conversion and
+  was repeated by `sync`. After that the bucket held exactly the 340,128 tiles and 46 small
+  files of the staging copy, each with the same size and MD5, and nothing else under `v1/`.
 - **Clock** (`make_raw.py meta`, `clock_check.json`): the knots reproduce the time of every
   one of the 60,997,315 sorted spikes from its sample number to within 5 × 10⁻⁷ sample, on
   all 7 probes, and the map is continuous at every sync edge.
@@ -165,7 +173,7 @@ this repository. The whole recording took TIME_PLACEHOLDER on one desktop (13 pr
   samples of the tile holding its central sample.
 - **Motion between seconds.** The shift changes once per second of probe time, as it did for
   the sorter, so the voltage can step by a few micrometers there.
-- **Speed.** A tile is about 1.2 MB to download and takes SPEED_PLACEHOLDER to process; each
+- **Speed.** A tile is about 1.2 MB to download and takes about 0.3 s in a worker to process; each
   tile also needs the edges of its two neighbors in time, which are downloaded whole. Viewing
   0.5 s of one probe (4 shanks) for the first time downloads 25 to 30 MB.
 - **Not measured**: the effect of dropping 2 bits on spike sorting. It was chosen for display.
