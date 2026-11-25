@@ -1,22 +1,36 @@
 # Raw-voltage underlay
 
-With the neurons plotted by depth, a window of 0.5 s or less and a few shanks in view, the
+With the neurons plotted by depth, a window of 4 s or less and few enough shanks in view, the
 viewer draws the recorded voltage of every site under the spikes: all 7 probes (28 shanks,
 10,752 sites), the whole synced period (1.97 to 2,430.81 s). The data are hosted in a
 Cloudflare R2 bucket, which is public: anyone with the address can download them.
+
+There are two hosted copies. The *recorded samples* (`v1/`, 2026-11-24) are the raw data with
+2 bits dropped, which the browser filters itself. The *display copy* (`d1/`, added the same
+night because the first was slow to view from a home connection) is the same voltage already
+filtered and referenced, in small tiles at two time resolutions; the viewer uses it by
+default and key V switches between the two.
+
+**Status, 2026-11-24, late evening:** the display copy is being converted and uploaded (about
+8 hours). Until its manifest is in the bucket, the viewer draws from the recorded samples.
 
 This folder holds the code that made the hosted data and the checks on it. The viewer side is
 `../raw_underlay.js` and `../raw_worker.js`.
 
 ## What is drawn
 
-- **Processing** (in a worker, `raw_worker.js`): per site, a 300 Hz high-pass (Butterworth,
-  order 3, run forward and backward); then, per sample, the median over the shank's working
-  sites is subtracted. Dead sites (from the sorter's `provenance.json`) are flat. This is
+- **Processing** (done once by `make_display.py` for the display copy; in a worker,
+  `raw_worker.js`, when the recorded samples are the source): per site, a 300 Hz high-pass
+  (Butterworth, order 3, run forward and backward); then, per sample, the median over the
+  shank's working sites is subtracted. Dead sites (from the sorter's `provenance.json`) are flat. This is
   simpler than what the sorter saw (no correction for the sites' sampling delays, one median
   over the shank and not one per digitizer group, no interpolation of bad sites).
 - **Pixels**: every screen pixel shows the sample of largest magnitude among the samples and
-  sites it covers. Black is negative.
+  sites it covers. Black is negative. In longer windows the display copy's second level is
+  used, which holds the sample of largest magnitude of every 8 samples: a pixel then shows
+  every block that holds one of its samples, so its edges are blurred by up to 7 samples
+  (0.23 ms), less than a pixel at the zooms where that level is used. A pixel column that
+  reaches across the edge of a tile reads both tiles.
 - **Depth**: a site at height y occupies the same 15 µm band as a neuron at that height. The two
   sites of a row (x = 27 and 59 µm) share the band: left site in the upper half, right site in
   the lower half. So the two columns of sites appear interleaved, as in a trace viewer.
@@ -82,11 +96,58 @@ a Zarr reader returns zeros outside.
   `https://steinmetzlab.net` and `http://localhost:8765` / `8771` to read it from a browser
   (not the site's http address, so the page redirects that to https).
 
+## The display copy
+
+Written by `make_display.py`; layout under `https://pub-6f7885d91fac46b4a0aad6e22005454a.r2.dev/d1/`:
+
+| File | Content |
+|---|---|
+| `manifest.json` | levels, scaling, tile ranges per probe, one check sum per shank and level |
+| `p<probe>/sh<shank>/L0/0.<tile>` | level 0: 50 ms (1,500 samples) of the shank's 384 sites |
+| `p<probe>/sh<shank>/L1/0.<tile>` | level 1: 0.5 s (1,875 values, one per 8 samples) |
+| `p<probe>/sh<shank>/L<level>/.zarray`, `.zattrs` | make each folder a Zarr (version 2) array, 384 × values, int8 |
+
+Clock, motion estimate, dead sites and scaling are those of the first copy (`v1/manifest.json`
+and the files it names); the viewer needs both manifests.
+
+- **Values**: the display processing above, computed from the original recording (not from
+  the 2-bits-dropped copy), one second at a time with 10 ms of margin on each side (against
+  one filter over a long stretch this differs by 0.02 µV at most); then microvolts / 6,
+  rounded, clipped to ±127, one signed byte. The step of 6 µV adds an error of sd 1.7 µV to a
+  site's noise of 14 to 17 µV; the range is ±762 µV (in three test seconds the largest
+  sample was 748 µV).
+- **Level 0**: every sample. Tile T holds samples T × 1,500 to T × 1,500 + 1,499.
+- **Level 1**: value j is the sample of largest magnitude among samples 8j to 8j + 7 (the
+  first one if two are equal), taken before rounding. Tile T holds values T × 1,875 to
+  T × 1,875 + 1,874, which is half a second. Because the viewer draws the largest magnitude
+  per pixel anyway, a pixel that covers whole blocks shows exactly what level 0 would.
+- **Chunk format**: zlib (level 6) of the int8 values, sites × values in C order, no filter:
+  zarr-python reads the arrays as they are, and a browser needs only
+  `DecompressionStream("deflate")`. (A delta filter made these files larger.)
+- **Which level is drawn**: level 0 while a block of level 1 would be wider than 2 device
+  pixels (windows shorter than about 0.25 s on a 1,800-pixel plot, 0.4 s on a 3,000-pixel
+  one) and the view needs at most 48 tiles; otherwise level 1, up to 4 s and 24 tiles: one
+  shank up to 4 s, one probe up to 2.5 s, 12 shanks up to 0.5 s. With the recorded samples
+  as the source the limits are 0.5 s and 24 tiles of 0.2 s, as before.
+- **Fetching ahead**: when a view is complete, the tiles before and after it in time (as many
+  as it shows, within the same limits) are fetched and kept as textures, so that panning by
+  up to a window's width shows voltage at once.
+- **Size**: about 450 GB expected: per shank and second of recording, 5.5 to 6.2 MB at level 0 and
+  0.8 MB at level 1. Exact numbers follow when the conversion is done.
+- **Why it is not much smaller than the first copy**: filtered noise does not compress. At
+  6 µV steps a value costs about 4 bits, as much as a 12 µV step of the unfiltered samples
+  with a delta filter. The gain is in what a view needs: no neighboring tiles for the
+  filter's edges, tiles a quarter as long, and a coarser level for long windows. One probe
+  for 50 ms is 4 to 8 files of 0.3 MB; from the recorded samples it is 12 to 16 files of
+  1.2 MB, and then 0.3 s of computing per tile.
+
 ## Running the viewer on other copies of the data
 
-- `python serve.py --raw Y:/temp/fd016_raw_v1` serves a local copy as `rawdata/`, and a viewer
-  on localhost uses it in place of the bucket.
-- `?rawbase=<address>` reads from another address; `?rawbase=off` switches the underlay off.
+- `python serve.py --raw Y:/temp/fd016_raw_v1 --disp D:/temp/fd016_disp` serves local copies as
+  `rawdata/` and `dispdata/`, and a viewer on localhost uses them in place of the bucket.
+- `?rawbase=<address>` reads from another address (the display copy is then looked for at
+  `d1/` beside `v1/`, or at `?dispbase=<address>`); `?rawbase=off` switches the underlay off,
+  `?dispbase=off` does without the display copy.
 
 ## Making the data
 
@@ -102,6 +163,22 @@ tile of the manifest's range is absent. KEYS.json holds the bucket's credentials
 this repository. The whole recording took about 4 hours on one desktop (13 processes), about 24 tiles
 (28 MB) per second, reading from and writing to the lab's file server.
 
+The display copy:
+
+    python make_display.py meta    --work D:/temp/fd016_disp
+    python make_display.py convert --work D:/temp/fd016_disp --keys KEYS.json
+    python make_display.py refs    --work D:/temp/fd016_disp
+    python make_display.py sync    --work D:/temp/fd016_disp --keys KEYS.json
+
+`meta` copies the first copy's manifest and clock files into the work folder and writes the
+display manifest. `convert` uploads each tile as it is made and keeps no copy on disk (with
+`--local` it also writes the tiles into the work folder, which is how a short stretch is
+made for testing the viewer); the progress files record every tile's size, MD5 and sum.
+`sync` lists the bucket, converts again whatever is missing or different, and uploads the
+manifest last, and only when every tile is there: the viewer takes the manifest as the sign
+that the copy is complete. The whole recording takes about 8 hours on one desktop (13
+processes).
+
 ## Checks
 
 - **Stored samples** (`verify_raw.py`): tiles read through zarr-python are compared with the
@@ -110,6 +187,22 @@ this repository. The whole recording took about 4 hours on one desktop (13 proce
   its last and 3 at random) were checked from the staging copy and as the bucket serves
   them: 0 differ, and the largest error of the value the viewer uses is 1.5 counts, the
   limit when 2 bits are dropped.
+- **Display copy, stored values** (`verify_display.py`): tiles are compared with values
+  recomputed from the `.cbin` files with code that shares nothing with the converter (the
+  `mtscomp` reader, scipy's `sosfiltfilt` over 5 s around the tile in one piece, zarr-python
+  for local tiles). A value may differ by one count only where the recomputed value lies
+  within 0.02 count of a rounding boundary. On 32 tiles of a test
+  stretch, 0 of 20.7 million values differed and 8 were such boundary cases; the check of
+  the whole copy follows the conversion.
+- **Display copy, upload** (`make_display.py sync`): follows the conversion.
+- **Display copy in the browser** (`?rawtest=1`): one tile of every shank and level decodes
+  to the sum recorded at conversion; level 1 equals the largest magnitude per block of level
+  0 for three tiles, value by value; level 0 differs from the recorded samples filtered in
+  the browser by 3.8 µV rms (correlation 0.98 to 0.99), which is the rounding of the two
+  copies and would be far larger with any shift in time or site; and seven views drawn from
+  it (the five below, one probe for 1.8 s and one shank for 3.6 s, the last two from level 1
+  with about 30 and 60 samples per pixel column) equal the rule recomputed pixel by pixel:
+  no pixel differs at level 0, at most 0.04% at level 1.
 - **Upload** (`make_raw.py sync`): 1 upload of the 340,128 failed during the conversion and
   was repeated by `sync`. After that the bucket held exactly the 340,128 tiles and 46 small
   files of the staging copy, each with the same size and MD5, and nothing else under `v1/`.
@@ -126,8 +219,9 @@ this repository. The whole recording took about 4 hours on one desktop (13 proce
   differ, where a pixel edge falls on a sample or site boundary. In the same views the spike
   cells are opaque exactly where a cell holds spikes and transparent elsewhere, and the two
   canvases cover the same rectangle. That recomputation uses the same formulas as the
-  drawing, written a second time, so it tests the GPU code and its inputs and not the rule;
-  the rule is tested by the spike-triggered averages below. The motion values and clock
+  drawing, written a second time (it looks samples up by their number in the recording and
+  knows nothing of tiles), so it tests the GPU code and its inputs and not the rule; the
+  rule is tested by the spike-triggered averages below. The motion values and clock
   lookups the page uses were also compared with the sorter's files directly.
 - **Spikes on their waveforms** (`validate_raw.py`, spike-triggered averages of the stored
   voltage at the viewer's spike times, units of 30 µV or more):
@@ -169,20 +263,26 @@ this repository. The whole recording took about 4 hours on one desktop (13 proce
 - **Unmarked spikes.** Only units that passed quality control are in the viewer: 49% of the
   spikes Kilosort assigned. Clear waveforms without a mark are usually spikes of a cluster
   that failed.
-- **Tile edges.** A pixel column that straddles two tiles (one every 0.2 s) shows only the
-  samples of the tile holding its central sample.
 - **Motion between seconds.** The shift changes once per second of probe time, as it did for
   the sorter, so the voltage can step by a few micrometers there.
-- **Speed.** A tile is about 1.2 MB to download and takes about 0.3 s in a worker to process; each
-  tile also needs the edges of its two neighbors in time, which are downloaded whole. Viewing
-  0.5 s of one probe (4 shanks) for the first time downloads 25 to 30 MB.
+- **Speed.** From the display copy a view of one probe for 50 ms downloads 1 to 2.5 MB in 4
+  to 8 files, and each request to the bucket waits about 0.25 s before data flow. From the
+  recorded samples a tile is about 1.2 MB and takes about 0.3 s in a worker to process, and
+  it also needs its two neighbors in time, so the same view is 14 to 19 MB. The legend shows
+  what the last view downloaded and how long it took.
+- **The display copy fixes the processing.** Its filter and reference were applied at
+  conversion; another filter means another conversion, or the recorded samples (key V).
+- **Level 1 at its edges.** A pixel shows every 8-sample block that holds one of its
+  samples, so a spike can appear up to 0.23 ms wider than it is.
 - **Not measured**: the effect of dropping 2 bits on spike sorting. It was chosen for display.
 
 ## Files
 
 | File | What |
 |---|---|
-| `make_raw.py` | the converter: clocks, motion, manifest, tiles, upload, test references |
+| `make_raw.py` | the converter of the recorded samples: clocks, motion, manifest, tiles, upload, test references |
+| `make_display.py` | the converter of the display copy: filtering, two levels, upload, check sums |
+| `verify_display.py` | the display copy against values recomputed from the `.cbin` files with independent code |
 | `cbin.py` | reads pieces of an mtscomp `.cbin` |
 | `verify_raw.py` | stored samples against the `.cbin` files, through zarr-python and mtscomp |
 | `validate_raw.py`, `compare_stretches.py` | spikes on their waveforms in time and depth; the motion shift |

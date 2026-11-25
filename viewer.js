@@ -1329,7 +1329,7 @@ function setupInteraction() {
     else if ((k === "s" || k === "S" || k === " ") && !e.altKey) {
       e.preventDefault(); if (!e.repeat) Sonify.toggle(); return;
     }
-    else if (RawUnderlay.key(k)) { /* raw voltage underlay: U, O, M, [, ] */ }
+    else if (RawUnderlay.key(k)) { /* raw voltage underlay: U, O, M, V, [, ] */ }
     else return;
     e.preventDefault(); clampView(); requestRender();
   });
@@ -1570,6 +1570,11 @@ async function runTests() {
         `${Math.max(...r.process.map((q) => q.maxAbsDiff_uV)).toExponential(1)} µV ` +
         `(${Math.max(...r.process.map((q) => q.ms)).toFixed(0)} ms per tile); drawing of ${r.draw.length} views: ` +
         `${Math.max(...r.draw.map((q) => q.error ? 1 : q.fracDiffer)).toExponential(1)} of the pixels differ at most; ` +
+        (!r.display ? "no display copy; " : r.displayError ? `display copy: ${r.displayError}; ` :
+          `display copy (${r.display}): ${r.ddecode.filter((q) => q.ok).length} of ${r.ddecode.length} tiles decode to the stored sum; ` +
+          `level 0 differs from the recorded samples by ${Math.max(...r.dcross.map((q) => q.rms_uV)).toFixed(1)} µV rms at most; ` +
+          `${r.dcross.reduce((a, q) => a + q.level1Wrong, 0)} values of level 1 disagree with level 0; drawing of ${r.ddraw.length} views: ` +
+          `${Math.max(...r.ddraw.map((q) => q.error ? 1 : q.fracDiffer)).toExponential(1)} of the pixels differ at most; `) +
         `details in window.__rawTest`;
     } else if (new URLSearchParams(location.search).has("sonifytest")) {
       document.getElementById("status").textContent = "Running the sonify self-test";

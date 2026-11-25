@@ -7,6 +7,8 @@ Serves this folder: index.html, viewer.js, data/ (written by prep_data.py) and r
 
 also serves that folder (raw voltage for the underlay, written by raw_underlay/make_raw.py) as
 rawdata/, and the viewer then reads the raw voltage from there and not from the hosted copy.
+With --disp D:/temp/fd016_disp as well, that folder (the display copy, written by
+raw_underlay/make_display.py --local) is served as dispdata/.
 """
 import argparse
 import functools
@@ -41,11 +43,13 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--raw", default=None, help="folder with raw voltage data, served as rawdata/")
+    ap.add_argument("--disp", default=None, help="folder with the display copy, served as dispdata/")
     a = ap.parse_args()
-    if a.raw:
-        if not (Path(a.raw) / "manifest.json").exists():
-            raise SystemExit(f"no manifest.json in {a.raw}")
-        MOUNTS["/rawdata/"] = Path(a.raw)
+    for folder, mount in ((a.raw, "/rawdata/"), (a.disp, "/dispdata/")):
+        if folder:
+            if not (Path(folder) / "manifest.json").exists():
+                raise SystemExit(f"no manifest.json in {folder}")
+            MOUNTS[mount] = Path(folder)
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", a.port),
                                           functools.partial(Handler, directory=str(HERE)))
     print(f"Serving http://localhost:{a.port}/  (Ctrl+C to stop)")

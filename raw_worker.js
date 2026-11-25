@@ -3,8 +3,12 @@
 // by the page) and applies the display processing. raw_underlay/ holds the Python reference of
 // both steps (make_raw.py decode_tile, make_raw_proto.py process_tile); ?rawtest=1 compares.
 //
-// A chunk is one file of a Zarr v2 array (channels x samples, int16, C order) stored with a
-// delta filter and zlib: inflate, then a running sum over the flattened array (int16 wraps).
+// A chunk of recorded samples is one file of a Zarr v2 array (channels x samples, int16, C
+// order) stored with a delta filter and zlib: inflate, then a running sum over the flattened
+// array (int16 wraps). A tile of the display copy (make_display.py) is one file of an int8
+// array stored with zlib alone: inflate, nothing else.
+
+const inflate = (buf) => new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream("deflate"))).arrayBuffer();
 
 const chunks = new Map();          // url -> Promise<Int16Array>, most recently used last
 const MAX_CHUNKS = 16;
@@ -13,7 +17,7 @@ function getChunk(url, buf, nch, n) {
   let p = chunks.get(url);
   if (p) { chunks.delete(url); chunks.set(url, p); return p; }
   p = (async () => {
-    const out = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream("deflate"))).arrayBuffer();
+    const out = await inflate(buf);
     if (out.byteLength !== nch * n * 2) throw new Error(`${url}: ${out.byteLength} bytes, expected ${nch * n * 2}`);
     const a = new Int16Array(out);
     for (let i = 1; i < a.length; i++) a[i] += a[i - 1];
@@ -114,6 +118,12 @@ onmessage = async (e) => {
       const [prev, cur, next] = await Promise.all(m.urls.map((u, i) => u ? getChunk(u, m.bufs[i], m.p.nch, m.p.tile) : null));
       const t = performance.now();
       const data = processTile(prev, cur, next, m.p);
+      postMessage({ id: m.id, ok: true, data, ms: performance.now() - t }, [data.buffer]);
+    } else if (m.type === "dtile") {     // a tile of the display copy: counts, channels x values
+      const t = performance.now();
+      const out = await inflate(m.buf);
+      if (out.byteLength !== m.nch * m.n) throw new Error(`${m.url}: ${out.byteLength} bytes, expected ${m.nch * m.n}`);
+      const data = new Int8Array(out);
       postMessage({ id: m.id, ok: true, data, ms: performance.now() - t }, [data.buffer]);
     } else if (m.type === "sum") {       // checksum of a decoded chunk (for ?rawtest=1)
       const a = await getChunk(m.url, m.buf, m.nch, m.tile);

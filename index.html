@@ -131,12 +131,15 @@
   scale) and color is loudness, so the color range also sets what is audible. Zoomed in, each
   spike is a struck note; zoomed out, each note is a sustained tone that follows the firing
   rate. You can pan, zoom and change the display while it plays.<br>
-  <b>Raw voltage:</b> with neurons plotted by depth, a window of 0.5 s or less and a few
-  shanks in view, the recorded voltage of every site is drawn under the spikes. It is
-  downloaded as needed (about 1 MB per shank for every 0.2 s), high-pass filtered at 300 Hz,
-  referenced to the median of its shank, and shifted along the shank by the sorter's motion
-  estimate so that it lines up with the sorted units. [ and ] set the gray range, O the
-  opacity of the spikes, M switches the motion shift off and on, U hides the voltage.<br><br>
+  <b>Raw voltage:</b> with neurons plotted by depth, a window of 4 s or less and few enough
+  shanks in view (one probe up to 2.5 s, 12 shanks up to 0.5 s), the recorded voltage of every
+  site is drawn under the spikes: high-pass filtered at 300 Hz, referenced to the median of
+  its shank, and shifted along the shank by the sorter's motion estimate so that it lines up
+  with the sorted units. It is downloaded as needed, about 0.3 MB per shank for every 50 ms;
+  in longer windows (from about 0.3 s) the largest of every 8 samples, about 0.4 MB per shank
+  for every 0.5 s. [ and ] set the gray range, O the opacity of the spikes, M switches the
+  motion shift off and on, V switches between this filtered copy and the recorded samples
+  filtered in the browser (slower), U hides the voltage.<br><br>
   Each displayed cell is the mean firing rate over every neuron and instant it covers.
   <b>Neurons</b> sets the vertical axis: sorted by depth (probe, shank, then position along
   the shank, shallow at top, one row per neuron); plotted by depth (each shank to scale, each
