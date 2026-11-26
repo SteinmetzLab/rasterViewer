@@ -22,8 +22,9 @@ assert b == 0.0 and a < -2
 with tempfile.TemporaryDirectory() as d:
     v = x.astype(np.float32); v[100:200] = np.nan
     man = write_traces(d, [dict(name="a1", label="A", unit="z", t0=1.5, dt=0.01, values=v),
-                           dict(name="b", t0=0, dt=1, values=[1, 2, 3], ylim=[0, 5])])
+                           dict(name="b", t0=0, dt=1, values=[1, 2, 3], ylim=[0, 5], show=False)])
     assert man["traces"][0]["n_valid"] == 9900 and man["traces"][1]["ylim"] == [0.0, 5.0]
+    assert man["traces"][0]["show"] is True and man["traces"][1]["show"] is False
     back = np.fromfile(d + "/trace_a1.f32", "<f4")
     assert np.array_equal(back, v, equal_nan=True)
     check(d)

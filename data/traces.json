@@ -14,6 +14,7 @@
     -0.2,
     7.2
    ],
+   "show": false,
    "n_valid": 15968,
    "sum": 3657.3352738074864,
    "description": "Singular component 1 of the video's motion energy (21.7% of its variance), minus its median (rest), in units of its standard deviation; crop x 78 to 698, y 242 to 702 of eye.mp4; frame times from the first camera trigger at a fitted 69.93 frames/s (see traces/check_timing.py), good to about 0.05 to 0.075 s; video ends at 232 s"
@@ -30,6 +31,7 @@
     -5.5,
     3.5
    ],
+   "show": false,
    "n_valid": 15968,
    "sum": -100.4473429561815,
    "description": "Singular component 2 of the video's motion energy (4.5% of its variance), minus its median (rest), in units of its standard deviation; crop x 78 to 698, y 242 to 702 of eye.mp4; frame times from the first camera trigger at a fitted 69.93 frames/s (see traces/check_timing.py), good to about 0.05 to 0.075 s; video ends at 232 s"
@@ -46,6 +48,7 @@
     -2.0,
     3.4000000000000004
    ],
+   "show": false,
    "n_valid": 15968,
    "sum": 284.8956699879309,
    "description": "Singular component 3 of the video's motion energy (2.8% of its variance), minus its median (rest), in units of its standard deviation; crop x 78 to 698, y 242 to 702 of eye.mp4; frame times from the first camera trigger at a fitted 69.93 frames/s (see traces/check_timing.py), good to about 0.05 to 0.075 s; video ends at 232 s"
@@ -62,6 +65,7 @@
     -40.0,
     40.0
    ],
+   "show": false,
    "n_valid": 243250,
    "sum": -5900.004440687946,
    "description": "Wheel velocity from the Timeline position counter: sample-to-sample difference, Gaussian smoothing (sd 50 ms), encoder counts per second, positive when the counter counts up; 169 single-count steps in the whole session"

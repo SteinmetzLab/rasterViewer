@@ -16,7 +16,8 @@ write_traces("../data", [
 Each trace: `name` (letters, digits, `_`; used in the URL), `label` and `unit` (shown beside the
 lane), `t0` and `dt` (sample i belongs to time `t0 + i * dt` seconds on the viewer's clock, the
 clock of the spike times), `values` (NaN where data are missing), and optionally `ylim`, the
-fixed vertical range of the lane. Without `ylim` the range is the 0.5th to 99.5th percentile,
+fixed vertical range of the lane, and `show` (`False`: the trace is not drawn when the viewer
+opens; its name is listed at the bottom left and a click shows it). Without `ylim` the range is the 0.5th to 99.5th percentile,
 widened to include zero. The viewer shades between zero and the trace, so give it series for
 which zero means something (rest, baseline, the mean).
 
@@ -26,7 +27,10 @@ which zero means something (rest, baseline, the mean).
 ## The traces of FD_016 2026-11-13/1
 
 Four traces: the top three singular components of the motion energy of the face video, and
-wheel velocity.
+wheel velocity. All four are listed with `show: False`, so the viewer opens without them
+(decision of N. Steinmetz, 2026-11-25): the video covers under 4 of the 40 min, its frame times
+rest on a fit, and the wheel hardly moves. Click their names at the bottom left of the viewer,
+or add `tshow=motion1,motion2,motion3,wheel` to the URL after `#`.
 
 | Step | Script | Output |
 |---|---|---|
@@ -87,8 +91,8 @@ is clipped there).
 
 ## Checks
 
-- `?tracetest=1` in the viewer: 25 of 25 checks (files against recorded counts and sums; exact
-  column summaries; drawing of known series; placement).
+- `?tracetest=1` in the viewer: 27 of 27 checks (files against recorded counts and sums; exact
+  column summaries; drawing of known series; which traces are shown; placement).
 - `motion_svd.py` asserts that the factors are orthonormal and satisfy the SVD equations.
 - `make_fd016_traces.py` asserts that the smoothed wheel velocity integrates to the distance
   moved; `prep_traces.py` reads every file back.

@@ -15,8 +15,9 @@
 //     visible at any zoom. The mean, minimum and maximum of a column are exact (no sample is
 //     skipped or counted twice): see aggregate().
 //
-// Right-click a lane to hide it; hidden traces are listed at the bottom left, click one to show
-// it again. Drag the bar between the raster and the traces to divide the height between them.
+// Right-click a lane to hide it; traces that are not shown are listed at the bottom left, click
+// one to show it. A trace listed with "show": false in traces.json starts out not shown.
+// Drag the bar between the raster and the traces to divide the height between them.
 // ?tracetest=1 runs a self-test.
 "use strict";
 
@@ -96,7 +97,7 @@ const Traces = (() => {
     let ylim = Array.isArray(d.ylim) && d.ylim[1] > d.ylim[0] ? d.ylim.slice(0, 2) : null;
     if (!ylim) ylim = lo < hi ? [Math.min(lo, 0), Math.max(hi, 0)] : [-1, 1];
     return { name: d.name, label: d.label || d.name, unit: d.unit || "", t0: d.t0, dt: d.dt, n: d.n,
-             ylim, v, levels: buildPyramid(v), hidden: false, rect: null, info: d };
+             ylim, v, levels: buildPyramid(v), hidden: d.show === false, rect: null, info: d };
   }
 
   async function load() {
@@ -305,7 +306,7 @@ const Traces = (() => {
     const hid = list.filter((t) => t.hidden);
     chips.style.display = list.length || loadError ? "block" : "none";
     chips.textContent = loadError ? `Behavioral traces could not be loaded: ${loadError}`
-      : !hid.length ? "Right-click a trace to hide it" : "Hidden traces (click to show): ";
+      : !hid.length ? "Right-click a trace to hide it" : "Behavioral traces not shown (click one to show it): ";
     if (!loadError) for (const t of hid) {
       const b = document.createElement("span");
       b.dataset.trace = t.name; b.title = "Show this trace"; b.textContent = t.label;
@@ -374,17 +375,18 @@ const Traces = (() => {
   }
 
   // ------------------------------------------------------------ URL
+  // tshow lists the traces that are shown (empty: none), so a link shows what its maker saw
+  // whatever the data set's defaults are; without tshow the defaults of traces.json apply.
   function toHash(p) {
     if (!list.length) return;
     p.set("tfrac", frac.toFixed(3));
-    const hid = list.filter((t) => t.hidden).map((t) => t.name);
-    if (hid.length) p.set("thide", hid.join(","));
+    p.set("tshow", visible().map((t) => t.name).join(","));
   }
   function fromHash(p) {
     const f = parseFloat(p.get("tfrac"));
     if (Number.isFinite(f)) frac = Math.min(FRAC_MAX, Math.max(FRAC_MIN, f));
-    const hid = new Set((p.get("thide") || "").split(","));
-    for (const t of list) t.hidden = hid.has(t.name);
+    const shown = p.has("tshow") ? new Set(p.get("tshow").split(",")) : null;
+    for (const t of list) t.hidden = shown ? !shown.has(t.name) : t.info.show === false;
   }
 
   // ------------------------------------------------------------ self-test (?tracetest=1)
@@ -498,8 +500,24 @@ const Traces = (() => {
             eq(col(25), [0.125, -1, 2]) && eq(col(26), [-1, -1, -1]),
             { n: s0.x.length, c0: col(0), c24: col(24), c25: col(25), c26: col(26) });
     }
-    // 5. the panel on screen: lanes inside the panel, time lined up with the raster's axis
-    if (list.length && layout.traceH) {
+    // 5. which traces are shown: the defaults of the file, and the URL
+    if (list.length) {
+      const was = list.map((t) => t.hidden), wasFrac = frac;
+      const shownNow = () => visible().map((t) => t.name).join(",");
+      const names = list.map((t) => t.name), dflt = list.filter((t) => t.info.show !== false).map((t) => t.name).join(",");
+      fromHash(new URLSearchParams(""));
+      const a = shownNow();
+      fromHash(new URLSearchParams("tshow=" + names[names.length - 1]));
+      const b = shownNow();
+      fromHash(new URLSearchParams("tshow="));
+      const c = shownNow();
+      fromHash(new URLSearchParams("tshow=" + names.join(",") + "&tfrac=0.4"));
+      const d = shownNow(), p = new URLSearchParams(); toHash(p);
+      check("shown traces: the file's defaults without tshow in the URL; otherwise exactly those tshow lists; the URL written back says the same",
+            a === dflt && b === names[names.length - 1] && c === "" && d === names.join(",") &&
+            p.get("tshow") === d && p.get("tfrac") === "0.400", { dflt, a, b, c, d, written: p.toString() });
+      // 6. the panel on screen: lanes inside the panel, time lined up with the raster's axis
+      computeLayout();                                       // all traces shown
       const L = lanes(), last = L[L.length - 1].R;
       check("panel: lanes fill the panel and share the raster's left and right edges",
             L[0].R.y === 0 && Math.abs(last.y + last.h - layout.traceH) < 1e-6 && L.every(({ R }) => R.x === layout.x && R.w === layout.w),
@@ -507,6 +525,14 @@ const Traces = (() => {
       check("panel: sits below the raster, above the time axis",
             layout.traceY >= layout.y + layout.h && Math.abs(layout.traceY + layout.traceH - layout.axisY) < 1e-6,
             { rasterBottom: layout.y + layout.h, traceY: layout.traceY, axisY: layout.axisY });
+      const hAll = layout.h;
+      for (const t of list) t.hidden = true;
+      computeLayout();
+      check("panel: with no trace shown it takes no height (the raster reaches the time axis)",
+            layout.traceH === 0 && layout.axisY === layout.y + layout.h && layout.h > hAll && cv.style.display === "none",
+            { traceH: layout.traceH, rasterH: [hAll, layout.h] });
+      list.forEach((t, i) => { t.hidden = was[i]; }); frac = wasFrac;
+      relayout();
     }
     const passed = checks.filter((c) => c.pass).length;
     return { passed, total: checks.length, checks, traces: list.map((t) => t.name) };

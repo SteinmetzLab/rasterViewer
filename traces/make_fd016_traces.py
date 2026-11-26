@@ -34,6 +34,9 @@ from prep_traces import write_traces
 
 WHEEL_SD = 0.05          # s
 WHEEL_STEP = 20          # Timeline samples per output sample (10 ms)
+# Not shown when the viewer opens (N. Steinmetz, 2026-11-25): the video covers under 4 of the
+# 40 min and its frame times are a fit, and the wheel hardly moves in this session.
+SHOW = False
 WHEEL_YLIM = [-40.0, 40.0]   # counts/s; one single-count step peaks at 8, the one large movement (75 s) at 316 is clipped
 
 
@@ -69,14 +72,14 @@ def main():
           f"under 'frame i at trigger i' the last sample would be at {(trig[zs.shape[0] - 1] + trig[zs.shape[0]]) / 2:.4f} s")
     note = (f"crop x {crop[0]} to {crop[2]}, y {crop[1]} to {crop[3]} of eye.mp4; frame times from the first camera "
             f"trigger at a fitted {rate:.2f} frames/s (see traces/check_timing.py), good to about 0.05 to 0.075 s; video ends at 232 s")
-    traces = [dict(name=f"motion{k + 1}", label=f"Video motion {k + 1}", unit="sd", t0=t0, dt=1 / rate, values=zs[:, k],
+    traces = [dict(name=f"motion{k + 1}", label=f"Video motion {k + 1}", unit="sd", t0=t0, dt=1 / rate, values=zs[:, k], show=SHOW,
                    description=f"Singular component {k + 1} of the video's motion energy "
                                f"({100 * float(z['var_frac'][k]):.1f}% of its variance), minus its median (rest), "
                                f"in units of its standard deviation; " + note)
               for k in range(3)]
     wt0, wdt, wv, n_steps, net = wheel_velocity(session)
     print(f"wheel: {n_steps} counter steps in the session, net {net:.0f} counts; peak |velocity| {np.abs(wv).max():.1f} counts/s")
-    traces.append(dict(name="wheel", label="Wheel velocity", unit="counts/s", t0=wt0, dt=wdt, values=wv, ylim=WHEEL_YLIM,
+    traces.append(dict(name="wheel", label="Wheel velocity", unit="counts/s", t0=wt0, dt=wdt, values=wv, ylim=WHEEL_YLIM, show=SHOW,
                        description=f"Wheel velocity from the Timeline position counter: sample-to-sample difference, Gaussian "
                                    f"smoothing (sd {WHEEL_SD * 1e3:.0f} ms), encoder counts per second, positive when the counter "
                                    f"counts up; {n_steps} single-count steps in the whole session"))

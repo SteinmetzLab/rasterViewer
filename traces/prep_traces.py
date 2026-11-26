@@ -11,12 +11,14 @@ writes data/traces.json and one little-endian float32 file per trace:
 
     {"format": "rasterViewer-traces-1", "traces": [
        {"name": ..., "label": ..., "unit": ..., "file": "trace_<name>.f32", "n": ..., "t0": ...,
-        "dt": ..., "ylim": [lo, hi], "n_valid": ..., "sum": ..., "description": ...}, ...]}
+        "dt": ..., "ylim": [lo, hi], "show": true, "n_valid": ..., "sum": ..., "description": ...}, ...]}
 
 name: letters, digits and _ (used in the URL). ylim: the fixed vertical range of the trace's
 lane; values beyond it are clipped in the drawing. If not given: the 0.5th to 99.5th percentile,
 widened to include zero; for a signal that sits at one value nearly all the time (a wheel that
 rarely turns), the percentiles of the samples away from that value.
+show: False for a trace that is not drawn when the viewer opens (its name is listed at the bottom
+left of the viewer; a click shows it). Default True.
 n_valid and sum (of the float32 values, in float64) let the viewer's self-test (?tracetest=1)
 check that it read the same numbers.
 
@@ -66,6 +68,7 @@ def write_traces(out_dir, traces, note=""):
         ok = np.isfinite(v)
         entries.append(dict(name=name, label=tr.get("label", name), unit=tr.get("unit", ""), file=f,
                             n=int(v.size), t0=float(tr["t0"]), dt=float(tr["dt"]), ylim=ylim,
+                            show=bool(tr.get("show", True)),
                             n_valid=int(ok.sum()), sum=float(v[ok].astype(np.float64).sum()),
                             description=tr.get("description", "")))
     man = dict(format=FORMAT, note=note, traces=entries)
@@ -86,7 +89,8 @@ def check(data_dir):
         assert np.isclose(v[ok].astype(np.float64).sum(), e["sum"], rtol=1e-12, atol=1e-9), e["name"]
         t_end = e["t0"] + (e["n"] - 1) * e["dt"]
         print(f"{e['name']:12s} {e['label']:22s} {e['n']:8d} samples ({e['n_valid']} with data), "
-              f"{e['t0']:.4f} to {t_end:.4f} s every {e['dt'] * 1e3:.4f} ms, lane {e['ylim'][0]:g} to {e['ylim'][1]:g} {e['unit']}")
+              f"{e['t0']:.4f} to {t_end:.4f} s every {e['dt'] * 1e3:.4f} ms, lane {e['ylim'][0]:g} to {e['ylim'][1]:g} {e['unit']}"
+              + ("" if e.get("show", True) else ", not shown at launch"))
     return man
 
 

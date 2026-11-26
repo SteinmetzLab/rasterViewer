@@ -195,23 +195,28 @@ the scripts that made the ones for FD_016 (its own README).
   samples per column the line joins the samples.
 - **Missing data** (NaN in the file, or times outside the series) are left empty.
 - **Reading values**: point at the traces; each lane shows its value at that time to the right.
-- **Hiding**: right-click a lane. Hidden traces are listed at the bottom left; click a name to
-  show it again.
+- **Hiding and showing**: right-click a lane to hide it. Traces that are not shown are listed at
+  the bottom left; click a name to show that trace. A data set can list a trace as not shown at
+  launch (`"show": false` in `traces.json`). **The four traces of FD_016 2026-11-13/1 start
+  out not shown**, because the video covers under 4 of the 40 min, its frame times are a fit,
+  and the wheel hardly moves in that session: click their names at the bottom left to see them.
 - **Height**: drag the bar between the raster and the traces (double-click it for the default,
   a quarter of the height).
-- Dragging or scrolling over the traces changes time only. The hidden traces and the height
-  are kept in the URL (`thide`, `tfrac`).
+- Dragging or scrolling over the traces changes time only. The traces shown and the height
+  are kept in the URL (`tshow`, `tfrac`).
 
 To add traces to a data set, call `write_traces` in `traces/prep_traces.py` with regularly
 sampled series on the viewer's clock (name, label, unit, time of the first sample, sample
-interval, values with NaN for gaps, and optionally the lane's range).
+interval, values with NaN for gaps, and optionally the lane's range and `show=False` for a
+trace that should not be drawn when the viewer opens).
 
 `?tracetest=1` checks the files against the counts and sums recorded when they were written,
 the exact column summaries against a plain loop (on synthetic series with gaps and on every
 loaded trace), that the columns of a view cover each sample once, the drawing of a known
 series (white line at the value, green and red on the right sides of zero, nothing where data
-are missing, mean and band for a column that spans a step), and the placement of the panel:
-25 of 25 checks pass with the four traces of FD_016.
+are missing, mean and band for a column that spans a step), which traces are shown (the
+file's defaults, the URL), and the placement of the panel:
+27 of 27 checks pass with the four traces of FD_016.
 
 ## What each cell shows (exact definition)
 
