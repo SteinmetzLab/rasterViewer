@@ -277,7 +277,7 @@ const Sonify = (() => {
       render();
     } else if (rendered !== viewKey()) render();      // something else about the view changed
     else if (shiftCss !== drawn.shift || Math.abs(head.x - drawn.x) > 0.3)
-      drawOverlay();           // the line and the time ticks move between steps
+      { drawOverlay(); Traces.draw(); }   // the line, the time ticks and the traces move between steps
     schedule();
   }
 
@@ -621,5 +621,6 @@ const Sonify = (() => {
 
   return { setup, toggle, start, stop, afterRender, grid, drawHead, status, toHash, fromHash, test,
            get playing() { return playing; }, get shiftCss() { return shiftCss; },
+           get headX() { return playing && head ? head.x : null; },    // x of the playhead (CSS px), or null
            get debug() { return { A, head, cfg, voices: G ? G.voices.map((v) => ({ midi: v.midi, last: v.last })) : [], ctx: G && G.ctx, master: G && G.master }; } };
 })();

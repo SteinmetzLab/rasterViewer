@@ -1,0 +1,70 @@
+{
+ "format": "rasterViewer-traces-1",
+ "note": "FD_016 2026-11-13/1, made by traces/make_fd016_traces.py",
+ "traces": [
+  {
+   "name": "motion1",
+   "label": "Video motion 1",
+   "unit": "sd",
+   "file": "trace_motion1.f32",
+   "n": 15968,
+   "t0": 3.530400004201517,
+   "dt": 0.014300008403034544,
+   "ylim": [
+    -0.2,
+    7.2
+   ],
+   "n_valid": 15968,
+   "sum": 3657.3352738074864,
+   "description": "Singular component 1 of the video's motion energy (21.7% of its variance), minus its median (rest), in units of its standard deviation; crop x 78 to 698, y 242 to 702 of eye.mp4; frame times from the first camera trigger at a fitted 69.93 frames/s (see traces/check_timing.py), good to about 0.05 to 0.075 s; video ends at 232 s"
+  },
+  {
+   "name": "motion2",
+   "label": "Video motion 2",
+   "unit": "sd",
+   "file": "trace_motion2.f32",
+   "n": 15968,
+   "t0": 3.530400004201517,
+   "dt": 0.014300008403034544,
+   "ylim": [
+    -5.5,
+    3.5
+   ],
+   "n_valid": 15968,
+   "sum": -100.4473429561815,
+   "description": "Singular component 2 of the video's motion energy (4.5% of its variance), minus its median (rest), in units of its standard deviation; crop x 78 to 698, y 242 to 702 of eye.mp4; frame times from the first camera trigger at a fitted 69.93 frames/s (see traces/check_timing.py), good to about 0.05 to 0.075 s; video ends at 232 s"
+  },
+  {
+   "name": "motion3",
+   "label": "Video motion 3",
+   "unit": "sd",
+   "file": "trace_motion3.f32",
+   "n": 15968,
+   "t0": 3.530400004201517,
+   "dt": 0.014300008403034544,
+   "ylim": [
+    -2.0,
+    3.4000000000000004
+   ],
+   "n_valid": 15968,
+   "sum": 284.8956699879309,
+   "description": "Singular component 3 of the video's motion energy (2.8% of its variance), minus its median (rest), in units of its standard deviation; crop x 78 to 698, y 242 to 702 of eye.mp4; frame times from the first camera trigger at a fitted 69.93 frames/s (see traces/check_timing.py), good to about 0.05 to 0.075 s; video ends at 232 s"
+  },
+  {
+   "name": "wheel",
+   "label": "Wheel velocity",
+   "unit": "counts/s",
+   "file": "trace_wheel.f32",
+   "n": 243250,
+   "t0": 0.00475,
+   "dt": 0.01,
+   "ylim": [
+    -40.0,
+    40.0
+   ],
+   "n_valid": 243250,
+   "sum": -5900.004440687946,
+   "description": "Wheel velocity from the Timeline position counter: sample-to-sample difference, Gaussian smoothing (sd 50 ms), encoder counts per second, positive when the counter counts up; 169 single-count steps in the whole session"
+  }
+ ]
+}

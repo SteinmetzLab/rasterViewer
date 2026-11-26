@@ -7,6 +7,7 @@
 // to the shank segment under the cell's center (pass 2), then a log color map (pass 3).
 // reference.py implements the same semantics on the CPU; ?test=1 compares the two.
 // sonify.js plays the view as sound (the Sonify button); ?sonifytest=1 checks it.
+// traces.js draws behavioral traces under the raster when data/traces.json exists; ?tracetest=1.
 "use strict";
 
 const DATA = "data/";
@@ -61,6 +62,7 @@ async function fetchBinary(url, label) {
 
 async function load() {
   const raw = RawUnderlay.load();        // optional: raw voltage (raw_underlay.js), found meanwhile
+  const beh = Traces.load();             // optional: behavioral traces (traces.js)
   meta = await (await fetch(DATA + "meta.json")).json();
   N = meta.n_rows; FS = meta.fs; TS = meta.t_start;
   const mr = await fetch(DATA + "manifest.json");
@@ -76,7 +78,7 @@ async function load() {
   if (rr.ok) rastermap = await rr.json();
   const ro = await fetch(DATA + "orderings.json");       // optional: further orderings of the neurons
   if (ro.ok) orderings = await ro.json();
-  await raw;
+  await raw; await beh;
 }
 
 // Spikes packed by pack_data.py: gzip streams split into parts. Decoded while downloading,
@@ -879,11 +881,16 @@ function computeLayout() {
   const stage = document.getElementById("stage");
   const dpr = window.devicePixelRatio || 1;
   const sw = stage.clientWidth, sh = stage.clientHeight;
-  const pw = Math.max(50, sw - L - RM), ph = Math.max(50, sh - TOP - BOT);
+  const pw = Math.max(50, sw - L - RM), phAll = Math.max(50, sh - TOP - BOT);
+  const tp = Traces.panel(phAll);          // height for the behavioral traces under the raster
+  const ph = phAll - tp.gap - tp.h;
   const b = state.block;
   const W = Math.max(4, Math.floor(pw * dpr / b)), H = Math.max(4, Math.floor(ph * dpr / b));
   const x0 = Math.round(L * dpr) / dpr, y0 = Math.round(TOP * dpr) / dpr;  // whole device px
   layout = { dpr, sw, sh, W, H, x: x0, y: y0, w: W * b / dpr, h: H * b / dpr };
+  // the trace panel (traceH is 0 without one) and the time axis below everything
+  layout.traceY = layout.y + layout.h + tp.gap; layout.traceH = tp.h;
+  layout.axisY = layout.traceY + tp.h;
   cvs.width = W; cvs.height = H;
   Object.assign(cvs.style, { left: layout.x + "px", top: layout.y + "px",
                              width: layout.w + "px", height: layout.h + "px" });
@@ -891,6 +898,7 @@ function computeLayout() {
   ov.width = Math.round(sw * dpr); ov.height = Math.round(sh * dpr);
   ov.style.width = sw + "px"; ov.style.height = sh + "px";
   ctx = ov.getContext("2d");
+  Traces.place();
 }
 
 // The grid of the view. j0 (optional, an integer): the columns are those of the grid starting at
@@ -935,6 +943,7 @@ function render() {
   Sonify.afterRender();    // while playing: schedule the sound of the columns just drawn
   if (pinned && pinned.key !== viewKey()) pinned = null;   // a pin lasts until the view changes
   drawOverlay();
+  Traces.draw();
   updateStatus();
   showHover(altHeld && lastMouse ? lastMouse : pinned);
   scheduleHash();
@@ -985,15 +994,16 @@ function drawOverlay() {
   // time axis
   const span = state.t1 - state.t0, step = niceStep(span, Math.max(2, pw / 110));
   ctx.strokeStyle = ink3; ctx.beginPath();
-  ctx.moveTo(px, py + ph + 0.5); ctx.lineTo(px + pw, py + ph + 0.5); ctx.stroke();
+  const ay = layout.axisY;             // below the raster, or below the traces under it
+  ctx.moveTo(px, ay + 0.5); ctx.lineTo(px + pw, ay + 0.5); ctx.stroke();
   ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.fillStyle = ink2;
   for (let t = Math.ceil(state.t0 / step) * step; t <= state.t1 + 1e-12; t += step) {
     const xx = px + (t - state.t0) / span * pw - Sonify.shiftCss;   // moves with the raster while playing
     if (xx < px - 0.5) continue;
-    ctx.beginPath(); ctx.moveTo(xx, py + ph); ctx.lineTo(xx, py + ph + 5); ctx.stroke();
-    ctx.fillText(fmtNum(t, step), xx, py + ph + 8);
+    ctx.beginPath(); ctx.moveTo(xx, ay); ctx.lineTo(xx, ay + 5); ctx.stroke();
+    ctx.fillText(fmtNum(t, step), xx, ay + 8);
   }
-  ctx.fillStyle = ink; ctx.fillText("Time (s)", px + pw / 2, py + ph + 28);
+  ctx.fillStyle = ink; ctx.fillText("Time (s)", px + pw / 2, ay + 28);
 
   // neuron axis
   const L = lay(), nspan = state.n1 - state.n0;
@@ -1211,7 +1221,7 @@ function setupInteraction() {
     if (IS_MAC && e.ctrlKey) d *= 6;
     const f = Math.exp(d * 0.0015);
     const inLeft = m.x < layout.x, inPlotX = m.x >= layout.x && m.x <= layout.x + layout.w;
-    if (inLeft || (e.shiftKey && inPlotX))
+    if (!Traces.hit(m) && (inLeft || (e.shiftKey && inPlotX)))   // over the traces: always time
       zoomNeurons(f, Math.min(Math.max(nAt(m.y), state.n0), state.n1));
     else zoomTime(f, Math.min(Math.max(tAt(m.x), state.t0), state.t1));
   }, { passive: false });
@@ -1242,9 +1252,12 @@ function setupInteraction() {
     if (m.y >= OV_Y && m.y <= OV_Y + OV_H && m.x >= layout.x && m.x <= layout.x + layout.w) {
       drag = { kind: "overview" }; jumpOverview(m.x); return;
     }
+    // over the behavioral traces: right-click hides one; drags change time only
+    const inTr = Traces.hit(m);
+    if (inTr && e.button === 2) { Traces.hideAt(m); e.preventDefault(); return; }
     // Ctrl + drag, Cmd + drag (macOS) or right-drag
     const boxMode = e.ctrlKey || (IS_MAC && e.metaKey) || e.button === 2;
-    drag = { kind: boxMode ? "box" : "pan", x: m.x, y: m.y,
+    drag = { kind: boxMode ? "box" : "pan", x: m.x, y: m.y, timeOnly: inTr,
              t0: state.t0, t1: state.t1, n0: state.n0, n1: state.n1 };
     e.preventDefault();
   });
@@ -1258,7 +1271,7 @@ function setupInteraction() {
       // a click while the view scrolls: nothing to pan yet
     } else if (drag && drag.kind === "pan") {
       const dt = -(m.x - drag.x) / layout.w * (drag.t1 - drag.t0);
-      const dn = -(m.y - drag.y) / layout.h * (drag.n1 - drag.n0);
+      const dn = drag.timeOnly ? 0 : -(m.y - drag.y) / layout.h * (drag.n1 - drag.n0);
       state.t0 = drag.t0 + dt; state.t1 = drag.t1 + dt;
       state.n0 = drag.n0 + dn; state.n1 = drag.n1 + dn;
       clampView(); requestRender();
@@ -1278,7 +1291,7 @@ function setupInteraction() {
         const a = tAt(Math.min(m.x, drag.x)), b = tAt(Math.max(m.x, drag.x));
         state.t0 = a; state.t1 = b;
       }
-      if (Math.abs(m.y - drag.y) > 4) {
+      if (Math.abs(m.y - drag.y) > 4 && !drag.timeOnly) {
         const a = nAt(Math.min(m.y, drag.y)), b = nAt(Math.max(m.y, drag.y));
         state.n0 = a; state.n1 = b;
       }
@@ -1420,6 +1433,7 @@ function scheduleHash() {
       block: state.block, vmin: s.vmin, vmax: s.vmax, cmap: s.cmap });
     RawUnderlay.toHash(p);
     Sonify.toHash(p);
+    Traces.toHash(p);
     history.replaceState(null, "", location.pathname + location.search + "#" + p);
   }, 300);
 }
@@ -1444,6 +1458,7 @@ function readHash() {
   if (b > s.vmin) s.vmax = b; else if (s.vmax <= s.vmin) s.vmax = s.vmin * 10;
   if (p.has("cmap") && meta.colormaps[p.get("cmap")]) s.cmap = p.get("cmap");
   Sonify.fromHash(p);
+  Traces.fromHash(p);
 }
 
 // ---------------------------------------------------------------- self-test (?test=1)
@@ -1549,6 +1564,7 @@ async function runTests() {
     clampView();
     setupControls();
     Sonify.setup();
+    Traces.setup();
     syncControls();
     computeLayout();
     setupInteraction();
@@ -1576,6 +1592,12 @@ async function runTests() {
           `${r.dcross.reduce((a, q) => a + q.level1Wrong, 0)} values of level 1 disagree with level 0; drawing of ${r.ddraw.length} views: ` +
           `${Math.max(...r.ddraw.map((q) => q.error ? 1 : q.fracDiffer)).toExponential(1)} of the pixels differ at most; `) +
         `details in window.__rawTest`;
+    } else if (new URLSearchParams(location.search).has("tracetest")) {
+      const r = window.__traceTest = Traces.test();
+      const bad = r.checks.filter((c) => !c.pass).map((c) => c.name);
+      console.log("trace self-test", r);
+      document.getElementById("status").textContent = testNote = `Trace self-test: ${r.passed} of ${r.total} checks passed` +
+        ` (${r.traces.length} traces loaded)` + (bad.length ? `; FAILED: ${bad.join("; ")}` : "") + "; details in console / window.__traceTest";
     } else if (new URLSearchParams(location.search).has("sonifytest")) {
       document.getElementById("status").textContent = "Running the sonify self-test";
       const r = await Sonify.test();

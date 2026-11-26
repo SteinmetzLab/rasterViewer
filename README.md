@@ -176,6 +176,43 @@ Format, conversion, and the checks (stored samples against the lab's files, the 
 against all 61 M spikes, spikes on their waveforms, the motion shift) are in
 [`raw_underlay/README.md`](raw_underlay/README.md).
 
+## Behavioral traces
+
+If `data/traces.json` exists, the series it lists are drawn in lanes under the raster, on the
+same time axis, and move with it (pan, zoom, Sonify). `traces.js` draws them; `traces/` holds
+the scripts that made the ones for FD_016 (its own README).
+
+- **A lane**: black background, a gray dashed line at zero, the trace as a white line, and the
+  area between zero and the trace shaded green above zero and red below, deeper the further
+  from zero. The vertical range of a lane is fixed (it comes from the file) and never rescales
+  to the view, so in a window too short to show any change over time the height and shade of
+  the band still show the level. Values beyond the range are clipped in the drawing; the
+  readout shows them.
+- **Many samples per screen column**: with two or more samples in a column the white line is
+  their mean and a pale band spans their smallest to largest value, so a brief event is not
+  averaged away at any zoom. These are exact: each sample in view is counted in exactly one
+  column (a small pyramid of minima, maxima and sums makes that fast). With fewer than two
+  samples per column the line joins the samples.
+- **Missing data** (NaN in the file, or times outside the series) are left empty.
+- **Reading values**: point at the traces; each lane shows its value at that time to the right.
+- **Hiding**: right-click a lane. Hidden traces are listed at the bottom left; click a name to
+  show it again.
+- **Height**: drag the bar between the raster and the traces (double-click it for the default,
+  a quarter of the height).
+- Dragging or scrolling over the traces changes time only. The hidden traces and the height
+  are kept in the URL (`thide`, `tfrac`).
+
+To add traces to a data set, call `write_traces` in `traces/prep_traces.py` with regularly
+sampled series on the viewer's clock (name, label, unit, time of the first sample, sample
+interval, values with NaN for gaps, and optionally the lane's range).
+
+`?tracetest=1` checks the files against the counts and sums recorded when they were written,
+the exact column summaries against a plain loop (on synthetic series with gaps and on every
+loaded trace), that the columns of a view cover each sample once, the drawing of a known
+series (white line at the value, green and red on the right sides of zero, nothing where data
+are missing, mean and band for a column that spans a step), and the placement of the panel:
+25 of 25 checks pass with the four traces of FD_016.
+
 ## What each cell shows (exact definition)
 
 - **Time**: column j covers the integer 30 kHz ticks from ceil(T0 + j dT) up to
@@ -375,6 +412,10 @@ about 10 ms. Before search, panning the whole session ran at about 6 frames/s on
   browser decompresses them while downloading and checks the result against checksums of the
   original arrays; `pack_data.py` checks the round trip is exact.
 
+- `traces.json` and `trace_<name>.f32` (optional): behavioral traces, each a regularly sampled
+  float32 series with the time of its first sample and its sample interval on the viewer's
+  clock (written by `traces/prep_traces.py`).
+
 To rebuild from the original recording (on the Windows desktop, where the inputs are):
 `python prep_data.py` writes the raw `data/ticks.u32` and `data/rows.u16` (not in git), then
 `python pack_data.py data` packs them. The viewer and `reference.py` use the raw files when
@@ -386,6 +427,8 @@ present, and the packed ones otherwise.
 |---|---|
 | `index.html`, `viewer.js` | The viewer (no external libraries) |
 | `sonify.js` | Plays the view as sound (Web Audio API); `?sonifytest=1` |
+| `traces.js` | Behavioral traces in lanes under the raster; `?tracetest=1` |
+| `traces/` | How the traces of FD_016 were made (video motion components, wheel velocity) and how to write traces for another data set (its own README) |
 | `serve.py` | Local server for this folder (Windows or macOS) |
 | `prep_data.py` | ALF + movie export to raw `ticks.u32`, `rows.u16`, and `meta.json` |
 | `pack_data.py` | Packs the raw spike files for the web; `load_spikes()` reads either form |
